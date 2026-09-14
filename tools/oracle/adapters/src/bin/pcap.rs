@@ -496,7 +496,7 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "esp"
     } else if layer.as_any().is::<Ah>() {
         "ah"
-    } else if layer.as_any().is::<Raw>() {
+    } else if layer.as_any().is::<Raw>() || layer.as_any().is::<Dot11Trigger>() {
         "payload"
     } else {
         layer.name()

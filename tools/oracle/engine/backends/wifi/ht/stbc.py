@@ -1,0 +1,199 @@
+"""Independent full HT20 NSS1/NSTS2 IQ, IEEE802.11-2020 clause19.
+
+Tables19-9/10 cyclic shifts, Eq19-27 training, Table19-18 STBC and Table19-19
+pilots. This constructs two transmit waveforms then one simulated receive IQ
+stream. It neither uses production TX nor claims a single-antenna STBC TX.
+"""
+import argparse
+import cmath
+import hashlib
+import math
+import tempfile
+from pathlib import Path
+import tools.oracle.engine.backends.wifi.ht.ampdu as aggregate
+import tools.oracle.engine.backends.wifi.ht.bcc as ht
+import tools.oracle.engine.backends.wifi.ht.ldpc as ldpc
+import tools.oracle.engine.backends.wifi.ofdm.base as base
+
+
+def waveform(psdu, mcs, guard, coding, greenfield, aggregation=False, fault=None,
+             extension=0, stbc=True):
+    nsts=1+int(stbc)
+    ntx=nsts+extension
+    assert 0<=extension<=3 and ntx<=4
+    extra_ltf=[0,1,2,4][extension]
+    if coding:
+        symbols,coded=ldpc.encode_psdu(psdu,mcs,invalid_service=fault=='invalid_service',stbc=stbc)
+    else:
+        symbols,coded=aggregate.bcc(psdu,mcs,stbc=stbc)
+    if fault in ['nonconvergence','damaged_codeword']:
+        start,length=0,len(coded)
+        if fault=='damaged_codeword':
+            ncbps,rate=ldpc.PARAMETERS[mcs]
+            _,count,block,short,puncture,repeat,_=ldpc.layout(len(psdu),ncbps,rate,2 if stbc else 1)
+            lengths=[block-short//count-(i<short%count)-puncture//count-(i<puncture%count)
+                     +repeat//count+(i<repeat%count) for i in range(count)]
+            assert count>3
+            start,length=sum(lengths[:2]),lengths[2]
+        noise=hashlib.shake_256(b'ht-stbc-damaged-codeword').digest((length+7)//8)
+        coded[start:start+length]=[noise[i//8]>>(i%8)&1 for i in range(length)]
+    assert not stbc or symbols % 2 == 0
+    nbpsc = ht.PARAMETERS[mcs][0]
+    chains = [[0j]*37 for _ in range(ntx)]
+
+    def field(first, second, prefix, repeat=1, legacy=False):
+        for chain in range(ntx):
+            if legacy:
+                time=first
+                advance={1:[0],2:[0,4],3:[0,2,4],4:[0,1,2,3]}[ntx][chain]
+            else:
+                time=[first,second][chain] if chain<nsts else [0j]*len(first)
+                advance=8 if chain==1 and chain<nsts else 0
+            shifted = time[advance:]+time[:advance]
+            samples = (shifted[-prefix:] if prefix else []) + shifted*repeat
+            chains[chain].extend(v/math.sqrt(ntx if legacy else nsts) for v in samples)
+
+    short = base.preamble()[:16]
+    long = ht.ifft([1,1]+base.LTF+[-1,-1])
+    field(short, short, 0, 10, legacy=not greenfield)
+    if greenfield:
+        field(long, long, 32, 2)
+    else:
+        legacy_long = base.ifft(base.LTF)
+        field(legacy_long, legacy_long, 32, 2, legacy=True)
+        length = 3*(3+nsts+extra_ltf+math.ceil(symbols*(64+guard)/80))-3
+        signal = base.symbol(base.interleave(base.encode(base.signal('1101',length)),1),1,1)[16:]
+        field(signal, signal, 16, legacy=True)
+    fields = [(mcs >> n)&1 for n in range(7)]+[0]
+    fields += [(len(psdu) >> n)&1 for n in range(16)]
+    fields += [1,int(extension==0),1,int(aggregation),int(stbc),0,int(coding),int(guard==8),extension&1,extension>>1]
+    if fault=='stbc2': fields[28:30]=[0,1]
+    if fault=='mcs8': fields[:7]=[(8>>n)&1 for n in range(7)]
+    if fault=='extension3': fields[32:34]=[1,1]
+    fields += ldpc.crc(fields)+[0]*6
+    if fault=='header_crc': fields[34]^=1
+    header = base.encode(fields)
+    for n in range(2):
+        freq = [0j]*53
+        for k, bit in zip(base.CARRIERS, base.interleave(header[n*48:(n+1)*48],1)):
+            freq[k+26] = 1j*(2*bit-1)
+        for k, sign in [(-21,1),(-7,1),(7,1),(21,-1)]:
+            freq[k+26] = sign
+        time = base.ifft(freq)
+        field(time, time, 16, legacy=not greenfield)
+    if not greenfield:
+        field(short, short, 0, 5)
+        field(long, long, 16)
+    if stbc:
+        field([-v for v in long], long, 16)
+    # Equation19-26: excite only the additional spatial dimensions. Their
+    # P rows/columns and CSD indexing restart within the extension portion.
+    mapping=[[1,-1,1,1],[1,1,-1,1],[1,1,1,-1],[-1,1,1,1]]
+    for column in range(extra_ltf):
+        for chain in range(ntx):
+            if chain<nsts:
+                chains[chain].extend([0j]*80)
+            else:
+                stream=chain-nsts
+                advance=[0,8,4][stream]
+                shifted=long[advance:]+long[:advance]
+                chains[chain].extend(v*mapping[stream][column]/math.sqrt(extension)
+                                     for v in shifted[-16:]+shifted)
+    start = len(chains[0])
+    assert start == 37+(480 if greenfield else 720)+80*(nsts-1+extra_ltf)
+    offset = 2 if greenfield else 3
+    polarity = [1-2*b for b in base.scramble([0]*(symbols+offset),127)]
+    pilots = [[1,1,-1,-1], [1,-1,-1,1]] if stbc else [[1,1,1,-1]]
+    group=2 if stbc else 1
+    for pair in range(0,symbols,group):
+        mapped = []
+        for n in range(pair,pair+group):
+            block = coded[n*52*nbpsc:(n+1)*52*nbpsc]
+            if not coding:
+                block = ht.interleave(block,nbpsc)
+            mapped.append([base.constellation(block[j*nbpsc:(j+1)*nbpsc]) for j in range(52)])
+        for within in range(group):
+            n = pair+within
+            freq = [[0j]*57,[0j]*57]
+            for j,k in enumerate(ht.CARRIERS):
+                freq[0][k+28] = mapped[within][j]
+                if stbc:
+                    freq[1][k+28] = (-1 if within==0 else 1)*mapped[1-within][j].conjugate()
+            for chain in range(nsts):
+                for j,k in enumerate([-21,-7,7,21]):
+                    freq[chain][k+28] = polarity[n+offset]*pilots[chain][(n+j)%4]
+            field(ht.ifft(freq[0]),ht.ifft(freq[1]),guard)
+    end = len(chains[0])
+    assert end == start+symbols*(64+guard) and all(len(chain)==end for chain in chains)
+    if fault=='zero_training':
+        assert not greenfield
+        for chain in chains: chain[start-160:start]=[0j]*160
+    if fault=='truncated_data':
+        for chain in chains: del chain[-(64+guard):]
+    for chain in chains:
+        chain.extend([0j]*64)
+    return chains,symbols,start,end
+
+
+def generate(out):
+    out.mkdir(parents=True,exist_ok=True)
+    rows=['name\tmcs\tguard_samples\tsymbols\tpsdu_hex\tsha256\tsamples\tdata_start\tframe_end\tldpc\tgreenfield']
+    for mcs in range(8):
+        for coding in [False,True]:
+            for greenfield,guard in [(False,8),(False,16),(True,16)]:
+                for extra in [44,4039]:
+                    psdu=base.frame(extra)
+                    chains,symbols,start,end=waveform(psdu,mcs,guard,coding,greenfield)
+                    for impairment in ['clean','offset']:
+                        wave=[a+(0.45+0.2j)*b for a,b in zip(*chains)]
+                        if impairment=='offset':
+                            wave=[(v+(0.2j*chains[0][n-3] if n>=3 else 0)
+                                    -(0.1*chains[1][n-2] if n>=2 else 0))
+                                  *cmath.exp(1j*(0.7+0.018*n)) for n,v in enumerate(wave)]
+                        iq=base.quantize(wave)
+                        name=f'ht-stbc-{mcs}-{"ldpc" if coding else "bcc"}-{"gf" if greenfield else "mf"}-gi{guard*50}-len{len(psdu)}-{impairment}'
+                        (out/f'{name}.cs8').write_bytes(iq)
+                        rows.append('\t'.join(map(str,[name,mcs,guard,symbols,psdu.hex(),hashlib.sha256(iq).hexdigest(),len(iq)//2,start,end,int(coding),int(greenfield)])))
+    (out/'ht-stbc-index.tsv').write_text('\n'.join(rows)+'\n')
+    invalid=['name\tresult\tsha256\tsamples']
+    for fault in ['header_crc','stbc2','mcs8','extension3','zero_training','invalid_service',
+                  'invalid_fcs','nonconvergence','truncated_data']:
+        psdu=bytearray(base.frame(44))
+        if fault=='invalid_fcs': psdu[-1]^=1
+        chains,_,_,_=waveform(psdu,7,16,True,False,fault=fault)
+        iq=base.quantize([a+(0.45+0.2j)*b for a,b in zip(*chains)])
+        name=f'ht-stbc-invalid-{fault}'
+        (out/f'{name}.cs8').write_bytes(iq)
+        invalid.append('\t'.join(map(str,[name,fault,hashlib.sha256(iq).hexdigest(),len(iq)//2])))
+    (out/'ht-stbc-invalid-index.tsv').write_text('\n'.join(invalid)+'\n')
+    aggregated=['name\tmcs\tguard_samples\tldpc\tpsdu_hex\tframe_offsets\tmpdu_hex\tsha256\tframe_end']
+    cases=[(mcs,coding,gf,guard,None) for mcs in [0,7] for coding in [False,True]
+           for gf,guard in [(False,8),(False,16),(True,16)]]
+    cases += [(3,True,False,8,'damaged_codeword'),(3,True,True,16,'damaged_codeword')]
+    for mcs,coding,greenfield,guard,fault in cases:
+        frames=[base.frame(1278),base.frame(44)] if fault else [base.frame(0)]*2
+        psdu,offsets=aggregate.ampdu.aggregate(frames)
+        chains,_,_,end=waveform(psdu,mcs,guard,coding,greenfield,aggregation=True,fault=fault)
+        if fault: frames,offsets=frames[1:],offsets[1:]
+        iq=base.quantize([a+(0.45+0.2j)*b for a,b in zip(*chains)])
+        name=f'ht-stbc-ampdu-{mcs}-{"ldpc" if coding else "bcc"}-{"gf" if greenfield else "mf"}-gi{guard*50}'
+        if fault: name+='-'+fault
+        (out/f'{name}.cs8').write_bytes(iq)
+        aggregated.append('\t'.join(map(str,[name,mcs,guard,int(coding),psdu.hex(),','.join(map(str,offsets)),
+                                              ','.join(f.hex() for f in frames),hashlib.sha256(iq).hexdigest(),end])))
+    (out/'ht-stbc-ampdu-index.tsv').write_text('\n'.join(aggregated)+'\n')
+    print(f'{len(rows)-1} complete, {len(invalid)-1} malformed and {len(aggregated)-1} aggregate HT20 STBC waveforms verified')
+
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check',action='store_true')
+    args=parser.parse_args()
+    if args.check:
+        with tempfile.TemporaryDirectory(prefix='ht-stbc-check-') as temporary:
+            out=Path(temporary)
+            generate(out)
+            for file in out.iterdir():
+                assert file.read_bytes()==(base.OUT/file.name).read_bytes(),file.name
+    else:
+        generate(base.OUT)

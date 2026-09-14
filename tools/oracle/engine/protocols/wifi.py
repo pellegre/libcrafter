@@ -305,6 +305,8 @@ def _dot11_frame_control_for_case(case: str, stack: Sequence[str]) -> int:
     key = case.replace("_", "-")
     if "llc_snap" in stack:
         return 2 << 2
+    if "trigger" in key:
+        return (1 << 2) | (2 << 4)
     if "control" in key:
         return (1 << 2) | (11 << 4)
     if "management" in key or "rsn" in key:

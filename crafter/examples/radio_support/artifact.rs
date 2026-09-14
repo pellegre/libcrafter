@@ -23,7 +23,25 @@ pub fn phy_family(rate: u32) -> &'static str {
 }
 /// PHY family comes from validated signaling when available, not rate guessing.
 pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
+    if frame.diagnostics.iter().any(|d| {
+        matches!(
+            d,
+            PhyDiagnostic::HeSignal { .. }
+                | PhyDiagnostic::HeErSignal { .. }
+                | PhyDiagnostic::HeMuSignal { .. }
+                | PhyDiagnostic::HeMuSigB { .. }
+                | PhyDiagnostic::HeTbSignal { .. }
+        )
+    }) {
+        return "he";
+    }
     if frame
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d, PhyDiagnostic::VhtSignalA { .. }))
+    {
+        "vht"
+    } else if frame
         .diagnostics
         .iter()
         .any(|d| matches!(d, PhyDiagnostic::HtSignal { .. }))
@@ -32,6 +50,163 @@ pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
     } else {
         phy_family(frame.rate_bps)
     }
+}
+pub fn he_signal_metadata(f: &HeSuSignalFields, preamble_sample_index: u64) -> serde_json::Value {
+    serde_json::json!({"format":"su", "mcs":f.mcs, "bandwidth_code":f.bandwidth,
+        "space_time_streams":f.space_time_streams, "guard_interval_ns":f.guard_ns,
+        "ltf_size":f.ltf_size, "coding":if f.ldpc {"ldpc"} else {"bcc"},
+        "dcm":f.dcm, "stbc":f.stbc, "midamble_period":f.midamble_period,
+        "bss_color":f.bss_color, "uplink":f.uplink, "beam_change":f.beam_change,
+        "beamformed":f.beamformed, "spatial_reuse":f.spatial_reuse, "txop":f.txop,
+        "pre_fec_padding":f.pre_fec_padding, "pe_disambiguity":f.pe_disambiguity,
+        "ldpc_extra_segment":f.ldpc_extra_segment, "preamble_sample_index":preamble_sample_index})
+}
+pub fn he_er_signal_metadata(
+    f: &HeSuSignalFields,
+    preamble_sample_index: u64,
+) -> serde_json::Value {
+    let mut metadata = he_signal_metadata(f, preamble_sample_index);
+    metadata["format"] = "er_su".into();
+    metadata["ru_tones"] = (if f.bandwidth == 0 { 242 } else { 106 }).into();
+    metadata["channel_width_mhz"] = 20.into();
+    metadata
+}
+pub fn he_tb_signal_metadata(
+    f: &HeTbSignalFields,
+    preamble_sample_index: u64,
+) -> serde_json::Value {
+    serde_json::json!({"format":"tb", "bandwidth_code":f.bandwidth,
+        "bss_color":f.bss_color, "spatial_reuse":f.spatial_reuse, "txop":f.txop,
+        "trigger_reserved":f.trigger_reserved, "preamble_sample_index":preamble_sample_index})
+}
+pub fn he_mu_signal_metadata(
+    f: &HeMuSignalFields,
+    preamble_sample_index: u64,
+) -> serde_json::Value {
+    serde_json::json!({"format":"mu", "bandwidth_code":f.bandwidth,
+        "sig_b_mcs":f.sig_b_mcs, "sig_b_dcm":f.sig_b_dcm,
+        "sig_b_compression":f.sig_b_compression,
+        "sig_b_symbols_or_users_raw":f.sig_b_symbols_or_users,
+        "ltf_size":f.ltf_size, "ltf_symbols":f.ltf_symbols,
+        "guard_interval_ns":f.guard_ns, "midamble_period":f.midamble_period,
+        "bss_color":f.bss_color, "uplink":f.uplink, "spatial_reuse":f.spatial_reuse,
+        "txop":f.txop, "stbc":f.stbc, "pre_fec_padding":f.pre_fec_padding,
+        "pe_disambiguity":f.pe_disambiguity, "ldpc_extra_segment":f.ldpc_extra_segment,
+        "preamble_sample_index":preamble_sample_index})
+}
+pub fn he_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
+    let mut metadata = frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeTbSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(he_tb_signal_metadata(fields, *preamble_sample_index)),
+        PhyDiagnostic::HeMuSigB {
+            fields,
+            preamble_sample_index,
+        } => Some(he_sig_b_metadata(fields, *preamble_sample_index)),
+        PhyDiagnostic::HeMuSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(he_mu_signal_metadata(fields, *preamble_sample_index)),
+        PhyDiagnostic::HeSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(he_signal_metadata(fields, *preamble_sample_index)),
+        PhyDiagnostic::HeErSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(he_er_signal_metadata(fields, *preamble_sample_index)),
+        _ => None,
+    })?;
+    if let Some((common, user, index, trigger)) = frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeTbUser {
+            common,
+            user,
+            user_index,
+            trigger_preamble_sample_index,
+            ..
+        } => Some((common, user, *user_index, *trigger_preamble_sample_index)),
+        _ => None,
+    }) {
+        metadata["user_index"] = index.into();
+        metadata["trigger_preamble_sample_index"] = trigger.into();
+        metadata["trigger_common_bits"] = common.bits().into();
+        metadata["effective_user_bits"] = user.bits().into();
+        metadata["ru_allocation"] = user.ru_allocation.into();
+        metadata["aid12"] = user.aid12.into();
+        metadata["mcs"] = user.mcs.into();
+        metadata["coding"] = (if user.ldpc { "ldpc" } else { "bcc" }).into();
+        metadata["dcm"] = user.dcm.into();
+        metadata["stbc"] = common.stbc.into();
+    }
+    if let Some(index) = frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeMuUser { user_index, .. } => Some(*user_index),
+        _ => None,
+    }) {
+        metadata["user_index"] = index.into();
+        metadata["user"] = metadata["users"]
+            .get(index)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+    }
+    Some(metadata)
+}
+
+pub fn he_sig_b_metadata(f: &HeMuSigBFields, preamble_sample_index: u64) -> serde_json::Value {
+    let mut metadata = he_mu_signal_metadata(&f.signal, preamble_sample_index);
+    metadata["sig_b_symbols"] = f.symbols.into();
+    metadata["sig_b_end_sample_index"] = f.end_sample.into();
+    metadata["common"]=f.common.as_ref().map(|c| serde_json::json!({
+        "allocation_code":c.allocation_code(),"rus":c.rus().iter().map(|r| serde_json::json!({"tones":r.tones,"first_slot":r.first_slot,"users":r.users})).collect::<Vec<_>>()
+    })).into();
+    metadata["users"]=f.users.iter().enumerate().map(|(position,result)| {
+        let Ok(user)=result else { return serde_json::json!({"position":position,"status":"error","error":format!("{:?}",result.as_ref().unwrap_err())}); };
+        let mut record=match user.encoding {
+            HeSigBUserEncoding::Unused { raw_parameters } => serde_json::json!({"allocation":"unused","raw_parameters":raw_parameters}),
+            HeSigBUserEncoding::NonMu { space_time_streams,beamformed,mcs,dcm,ldpc } => serde_json::json!({"allocation":"non_mu","space_time_streams":space_time_streams,"beamformed":beamformed,"mcs":mcs,"dcm":dcm,"coding":if ldpc {"ldpc"} else {"bcc"}}),
+            HeSigBUserEncoding::MuMimo { spatial_configuration,streams,start_stream,total_streams,mcs,ldpc } => serde_json::json!({"allocation":"mu_mimo","spatial_configuration":spatial_configuration,"streams":streams,"start_stream":start_stream,"total_streams":total_streams,"mcs":mcs,"coding":if ldpc {"ldpc"} else {"bcc"}}),
+        };
+        record["position"]=position.into();record["status"]="checked".into();record["sta_id"]=user.sta_id.into();record
+    }).collect::<Vec<_>>().into();
+    metadata
+}
+pub fn vht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
+    frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::VhtSignalA {
+            fields: f,
+            preamble_sample_index,
+        } => {
+            let VhtSignalAUsers::Single {
+                space_time_streams,
+                mcs,
+                ldpc,
+                beamformed,
+                partial_aid,
+            } = f.users
+            else {
+                return None;
+            };
+            let sig_b = frame.diagnostics.iter().find_map(|d| match d {
+                PhyDiagnostic::VhtSignalB {
+                    fields,
+                    preamble_sample_index: index,
+                } if index == preamble_sample_index => fields.apep_length_bounds(),
+                _ => None,
+            });
+            Some(serde_json::json!({
+                "mcs":mcs, "bandwidth_code":f.bandwidth_code,
+                "space_time_streams":space_time_streams, "stbc":f.stbc,
+                "coding":if ldpc {"ldpc"} else {"bcc"},
+                "guard_interval_ns":if f.short_guard_interval {400} else {800},
+                "short_gi_disambiguation":f.short_gi_disambiguation,
+                "txop_ps_not_allowed":f.txop_ps_not_allowed, "ldpc_extra_symbol":f.ldpc_extra_symbol,
+                "group_id":f.group_id, "partial_aid":partial_aid, "beamformed":beamformed,
+                "apep_length_bounds":sig_b, "service_crc_verified":sig_b.is_some(),
+                "preamble_sample_index":preamble_sample_index,
+            }))
+        }
+        _ => None,
+    })
 }
 pub fn ht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
     frame.diagnostics.iter().find_map(|d| match d {
@@ -117,7 +292,7 @@ impl Config {
         // Example-side limits keep untrusted artifact metadata from requesting huge allocations.
         if c.max_chunk_samples > 262_144
             || c.max_buffer_samples > MAX_EXAMPLE_BUFFER_SAMPLES
-            || c.max_frame_bytes > 4095
+            || c.max_frame_bytes > 16383
             || c.max_pending_frames > 1024
         {
             return Err("artifact allocation bounds exceeded".into());
@@ -246,4 +421,30 @@ pub fn crc32(bytes: &[u8]) -> u32 {
 }
 pub fn valid_fcs(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && crc32(&bytes[..bytes.len() - 4]).to_le_bytes() == bytes[bytes.len() - 4..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn radio_artifact_vht_frame_allocation_bounds() {
+        let mut config = Config::from(&RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 5_180_000_000,
+            max_chunk_samples: 128,
+            max_buffer_samples: 120_000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 8,
+            max_capture_samples: 1_000_000,
+            max_duration: Duration::from_secs(1),
+        });
+        for limit in [4095, 4096, 16383] {
+            config.max_frame_bytes = limit;
+            assert_eq!(config.rx().unwrap().max_frame_bytes, limit);
+        }
+        for limit in [0, 16384, usize::MAX] {
+            config.max_frame_bytes = limit;
+            assert!(config.rx().is_err(), "limit={limit}");
+        }
+    }
 }

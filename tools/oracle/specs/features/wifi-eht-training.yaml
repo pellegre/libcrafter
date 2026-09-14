@@ -1,0 +1,24 @@
+version: 1
+kind: feature
+name: wifi_eht_training
+summary: EHT20 one-stream LTF channel recovery positioned at DATA.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: non-ofdma-training
+    source: IEEE 802.11 TGbe 11-20/1260r4 and 11-23/0359r1
+    checks: [two_x_ltf, four_x_ltf, guard_intervals, one_stream, exact_sample_coordinates, channel_equalization, bounded_samples]
+  - name: ofdma-training
+    source: IEEE 802.11be-2024 Tables 36-4 and 36-34; IEEE 802.11 TGbe 11-21/1987r1
+    checks: [ordered_resources, ru_components, mru_components, per_resource_user_ranges, partial_one_stream_admission, spatial_separation_rejection]
+coverage_cases: [wifi-eht-training]
+supported_cases:
+  - {name: wifi-eht-training, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Complete one-stream non-OFDMA and per-resource OFDMA EHT20 training is implemented for RU and MRU allocations.
+      - Overlapping MU-MIMO spatial separation requires multiple receive chains and remains explicitly unsupported.

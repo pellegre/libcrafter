@@ -1,0 +1,50 @@
+version: 1
+kind: feature
+name: wifi_he_tb_data_iq
+summary: Explicit Trigger-configured HE20 TB per-user IQ to PSDU kernel.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: streaming-trigger-context
+    source: IEEE 802.11-2020 9.2.4.2; IEEE 802.11ax-2021 9.2.5.2, 26.5.2.2.1, 27.3.15.3
+    checks: [fcs_valid_trigger_only, protection_duration_search_window, signaling_context_match, reset_clears_context, bounded_data_retention, per_mpdu_fcs_publication, simultaneous_scheduled_and_ra_ru_frames]
+  - name: trigger-schedule
+    source: IEEE 802.11ax-2021 9.3.1.22.1 Figures 9-64e/f, 26.5.2.2, 26.5.4.2
+    checks: [contiguous_same_size_ra_expansion, more_ra_not_stream_count, bounded_schedule, overlapping_users_not_separated, unallocated_ru_not_decoded, opaque_schedule_rejected]
+  - name: ht-trigger-carrier
+    source: IEEE 802.11ax-2021 26.5.2.2.1; IEEE 802.11-2020 19.3
+    checks: [long_gi_ht_trigger_context, bcc_and_ldpc_carrier, plain_and_aggregate_carrier, short_gi_does_not_seed_context]
+  - name: vht-trigger-carrier
+    source: IEEE 802.11ax-2021 26.5.2.2.1; IEEE 802.11-2020 21.3
+    checks: [long_gi_vht_trigger_context, bcc_and_ldpc_carrier, repeated_identical_triggers, short_gi_does_not_seed_context]
+  - name: he-su-trigger-carrier
+    source: IEEE 802.11ax-2021 26.5.2.2.1, 26.5.2.3.3, 27.3
+    checks: [he_su_and_er_su_trigger_context, bcc_ldpc_and_dcm_carrier, bss_color_match, stbc_does_not_seed_context]
+  - name: trs-control-context
+    source: IEEE 802.11ax-2021 9.2.4.6a.1, 26.5.2.2, 26.5.2.3.4, and 27.3.12.5.4
+    checks: [he_carrier_only, individual_address, ru_and_mcs, carrier_dcm, carrier_bss_color, derived_ltf_and_guard, one_ltf, bcc_for_he20_ru, fixed_spatial_reuse, fixed_sig_a2_reserved, ul_data_symbols, packet_extension_disambiguation, invalid_context_rejection]
+  - name: he-mu-multi-aggregate-context
+    source: IEEE 802.11ax-2021 26.5.2.2 and 26.5.2.2.4
+    checks: [same_ppdu_identity, compatible_common_fields, distinct_schedule_combination, repeated_schedule_deduplication, trigger_and_trs_combination, overlapping_ru_exclusion, incompatible_context_rejection]
+  - name: tb-user-iq
+    source: IEEE 802.11ax-2021 27.3.10, 27.3.11.10, 27.3.12.5.5, Equation 27-111
+    checks: [matching_trigger_fields, bounded_timing, header_only_admission, isolated_ru_training, per_user_pilot_phase, bcc_ldpc_psdu, midamble_refresh, service_integrity, simultaneous_disjoint_ru_users]
+  - name: quantized-capture-quality
+    source: IEEE 802.11ax-2021 27.3.19.4.3-4, Table 27-49, Equation 27-127
+    checks: [exact_synthetic_carrier_and_channel, alamouti_inverse, nearest_1024qam_errors, weak_capture_rejection, balanced_capture_recovery]
+coverage_cases: [wifi-he-tb-data-iq]
+supported_cases:
+  - {name: wifi-he-tb-data-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Bounded streaming reception uses FCS-valid Trigger or HE-carried TRS Control context to publish only FCS-valid response MPDUs. Full-RU MCS11 STBC includes balanced positive captures and near/far CS8 captures whose post-quantization symbols remain rejection controls; valid FEC, SERVICE, and MPDU FCS are never relaxed. HT/VHT/HE carrier and simultaneous-user exchanges extend the offline contract, not live qualification.
+      - Isolated per-user kernel is checked against 282 independent waveforms, including SERVICE rejection and sample/payload bounds.
+      - The isolated per-user kernel requires explicit caller-established Trigger association and one-DATA-stream user context. It does not perform spatial separation or automatic exchange matching.
+      - Header-only admission checks resolved Trigger or TRS context, per-user geometry and retained-sample/payload limits before DATA buffering; aggregate scanning and per-MPDU FCS validation remain the streaming publisher's responsibility.
+      - Schedule expansion retains original User Info indices, expands same-size RA ranges, and marks overlapping or unsupported spatial entries ineligible while preserving independent disjoint allocations. Schedule geometry alone is not exchange association or payload admission.
+      - 276 independently summed and quantized captures recover 1380 simultaneous disjoint-RU user payloads, including per-user carrier offsets and STBC pilot nulls. Each capture uses one RU size and common MCS/coding; relative timing and sampling-clock offsets remain unqualified.
+      - Two-pilot tracking retains the prior slope when a weaker pilot is below a constellation-dependent noise threshold. Independent user oscillators are never replaced by a pooled downlink phase estimator.

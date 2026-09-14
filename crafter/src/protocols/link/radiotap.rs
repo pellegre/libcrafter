@@ -11,7 +11,7 @@ use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 use crate::registry::ProtocolRegistry;
 
-use super::decode_dot11_with_registry;
+use super::decode_dot11_with_registry_fcs;
 
 pub(crate) const RADIOTAP_FIXED_HEADER_LEN: usize = 4;
 pub(crate) const RADIOTAP_MIN_HEADER_LEN: usize = 8;
@@ -1502,12 +1502,14 @@ pub(crate) fn decode_radiotap_with_registry(
     bytes: &[u8],
 ) -> Result<Packet> {
     let (radiotap, tail) = decode_radiotap(bytes)?;
+    let fcs_present = radiotap.fcs_status().is_some_and(|f| f.present());
     let packet = Packet::new().push(radiotap);
 
     if tail.is_empty() {
         Ok(packet)
     } else {
-        decode_dot11_with_registry(registry, tail).map(|dot11| packet.concat(dot11))
+        decode_dot11_with_registry_fcs(registry, tail, fcs_present)
+            .map(|dot11| packet.concat(dot11))
     }
 }
 

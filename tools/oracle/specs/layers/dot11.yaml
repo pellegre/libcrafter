@@ -56,6 +56,7 @@ fields:
       - authentication
       - deauthentication
       - rts
+      - trigger
       - cts
       - ack
       - data

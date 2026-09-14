@@ -1,0 +1,24 @@
+version: 1
+kind: feature
+name: wifi_vht_ampdu
+summary: VHT delimiter and aggregate recovery with independent byte fixtures.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: framing
+    source: IEEE 802.11-2020 9.7.1-2 and 10.12.6-8
+    checks: [split_14_bit_length, delimiter_crc, smpdu_eof, multi_mpdu, spacing_delimiters, final_alignment_padding, eof_padding_delimiters, trailing_eof_octets, reserved_bit_preserved]
+  - name: recovery
+    checks: [fcs_valid_only, four_byte_resynchronization, malformed_eof_order, truncated_mpdu, caller_mpdu_limit, ht_behavior_preserved]
+coverage_cases: [wifi-vht-ampdu-bytes]
+supported_cases:
+  - {name: wifi-vht-ampdu-bytes, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Byte framing is not streaming IQ integration or hardware qualification.
+      - Already recovered FCS-valid frames remain observable if a later delimiter violates EOF ordering; the violation is explicit and stops further frame publication.
+      - The VHT scanner borrows caller-bounded PSDU storage. The HT total-length limit is not applied to VHT EOF padding; PHY admission must enforce the signaled APEP and receive buffer limits.

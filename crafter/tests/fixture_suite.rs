@@ -8586,13 +8586,145 @@ fn assert_fixture_filename_convention(relative: &Path) {
 
     if category == "iq" {
         assert_eq!(relative.components().count(), 2, "IQ fixtures must be flat");
+        if let Some(base_name) = file_name.strip_suffix("-index.tsv") {
+            assert_lower_dash_name(base_name, relative_str);
+            return;
+        }
+        if let Some(base_name) = file_name.strip_suffix(".cs8") {
+            let sibling_index = format!("iq/{base_name}-index.tsv");
+            if fixture_path(&sibling_index).is_file() {
+                assert_lower_dash_name(base_name, relative_str);
+                return;
+            }
+        }
         if matches!(
             file_name,
             "ramp.cs8"
+                | "eht-prefix-iq.cs8"
+                | "eht-sig-iq.cs8"
+                | "eht-mu-sig-iq.cs8"
+                | "eht-ofdma-sig-iq.cs8"
+                | "eht-training-iq.cs8"
+                | "eht-ofdma-training-iq.cs8"
+                | "eht-data-bcc-iq.cs8"
+                | "eht-data-ldpc-iq.cs8"
                 | "ofdm-index.tsv"
                 | "ofdm-manifest.json"
                 | "ofdm-clock-manifest.json"
                 | "ht-signal-index.tsv"
+                | "eht-usig-index.tsv"
+                | "eht-prefix-index.tsv"
+                | "eht-prefix-invalid-index.tsv"
+                | "eht-sig-index.tsv"
+                | "eht-sig-iq-index.tsv"
+                | "eht-sig-iq-invalid-index.tsv"
+                | "eht-mu-sig-index.tsv"
+                | "eht-mu-sig-iq-index.tsv"
+                | "eht-mu-sig-iq-invalid-index.tsv"
+                | "eht-ofdma-sig-index.tsv"
+                | "eht-ofdma-ru-index.tsv"
+                | "eht-ofdma-sig-iq-index.tsv"
+                | "eht-ofdma-sig-iq-invalid-index.tsv"
+                | "eht-training-iq-index.tsv"
+                | "eht-ofdma-training-iq-index.tsv"
+                | "eht-data-timing-index.tsv"
+                | "eht-data-capacity-index.tsv"
+                | "eht-data-bcc-index.tsv"
+                | "eht-data-bcc-iq-index.tsv"
+                | "eht-data-ldpc-index.tsv"
+                | "eht-data-ldpc-payload-index.tsv"
+                | "eht-data-ldpc-iq-index.tsv"
+                | "eht-ofdma-data-bcc-iq-index.tsv"
+                | "eht-ofdma-data-ldpc-iq-index.tsv"
+                | "eht-tb-data-bcc-iq-index.tsv"
+                | "eht-tb-data-ldpc-iq-index.tsv"
+                | "eht-tb-exchange-index.tsv"
+                | "eht-tb-resource-index.tsv"
+                | "eht-tb-timing.tsv"
+                | "he-signal-a-index.tsv"
+                | "he-mu-signal-a-index.tsv"
+                | "he-tb-signal-a-index.tsv"
+                | "he-tb-signal-a-invalid.tsv"
+                | "he-sig-b-common.tsv"
+                | "he-sig-b-users.tsv"
+                | "he-sig-b-coded.tsv"
+                | "he-sig-b-modulation.tsv"
+                | "he-sigb-iq-index.tsv"
+                | "he-mu-signal-a-invalid.tsv"
+                | "he-transform-index.tsv"
+                | "he-timing-index.tsv"
+                | "he-mu-timing.tsv"
+                | "he-tb-timing.tsv"
+                | "he-tb-schedule.tsv"
+                | "he-tb-exchange-index.tsv"
+                | "he-tb-exchange-quality.tsv"
+                | "he-tb-ht-exchange-index.tsv"
+                | "he-tb-vht-exchange-index.tsv"
+                | "he-tb-he-exchange-index.tsv"
+                | "he-tb-multi-exchange-index.tsv"
+                | "he-tb-ldpc-layout.tsv"
+                | "he-tb-ldpc-payload.tsv"
+                | "he-er-timing-index.tsv"
+                | "he-er106-capacity-index.tsv"
+                | "he-mu26-capacity-index.tsv"
+                | "he-mu26-bcc-index.tsv"
+                | "he-mu52-bcc-index.tsv"
+                | "he-mu106-bcc-index.tsv"
+                | "he-mu242-bcc-index.tsv"
+                | "he-mu52-capacity-index.tsv"
+                | "he-mu106-capacity-index.tsv"
+                | "he-mu242-capacity-index.tsv"
+                | "he-er106-training-index.tsv"
+                | "he-mu-training-index.tsv"
+                | "he-mu-stbc-training-index.tsv"
+                | "he-mu-stbc-training-long-index.tsv"
+                | "he-mu-ldpc-layout.tsv"
+                | "he-mu-ldpc-payload.tsv"
+                | "he-dcm-half12-metrics.tsv"
+                | "he-dcm-half24-metrics.tsv"
+                | "he-ru-symbol.tsv"
+                | "he-ru-stbc-symbol.tsv"
+                | "he-mu-data-iq-index.tsv"
+                | "he-tb-data-iq-index.tsv"
+                | "he-tb-multi-iq-index.tsv"
+                | "he-mu-ampdu-iq-index.tsv"
+                | "he-mu-mixed-iq-index.tsv"
+                | "he-mu-stbc-iq-index.tsv"
+                | "he-mu-compressed-iq-index.tsv"
+                | "he-er242-capacity-index.tsv"
+                | "he-er106-bcc-index.tsv"
+                | "he-er242-bcc-index.tsv"
+                | "he-capacity-index.tsv"
+                | "he-bcc-index.tsv"
+                | "he-bcc-iq-index.tsv"
+                | "he-ampdu-iq-index.tsv"
+                | "he-bcc-iq-invalid-index.tsv"
+                | "he-training4-index.tsv"
+                | "he-stbc-iq-index.tsv"
+                | "he-stbc-iq-invalid-index.tsv"
+                | "he-training-sparse-index.tsv"
+                | "he-training4-invalid-index.tsv"
+                | "he-su-prefix-index.tsv"
+                | "he-mu-prefix-index.tsv"
+                | "he-mu-prefix-invalid-index.tsv"
+                | "he-tb-prefix-index.tsv"
+                | "he-tb-prefix-invalid-index.tsv"
+                | "he-tb-mu-carrier-exchange-index.tsv"
+                | "he-tb-trs-exchange-index.tsv"
+                | "he-er-prefix-index.tsv"
+                | "he-er-prefix-invalid-index.tsv"
+                | "he-er-iq-index.tsv"
+                | "he-er106-iq-index.tsv"
+                | "he-er106-iq-invalid-index.tsv"
+                | "he-er-iq-invalid-index.tsv"
+                | "he-su-prefix-invalid-index.tsv"
+                | "vht-signal-a-index.tsv"
+                | "vht-signal-b20-index.tsv"
+                | "vht-timing-index.tsv"
+                | "vht-qam-index.tsv"
+                | "vht-bcc-data-index.tsv"
+                | "vht-bcc-iq-index.tsv"
+                | "vht-bcc-iq-invalid-index.tsv"
                 | "ht-mixed-index.tsv"
                 | "ht-bcc-index.tsv"
                 | "ht-greenfield-index.tsv"
@@ -8606,12 +8738,39 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ht-extension-ampdu-index.tsv"
                 | "ampdu-delimiters.tsv"
                 | "ampdu-index.tsv"
+                | "vht-ampdu-delimiters.tsv"
+                | "vht-ampdu-index.tsv"
+                | "he-ampdu-index.tsv"
+                | "vht-ampdu-iq-index.tsv"
+                | "vht-reference-index.tsv"
                 | "ht-ampdu-index.tsv"
                 | "ht-ldpc-index.tsv"
                 | "ht-ldpc-invalid-index.tsv"
                 | "ldpc-codewords.json"
                 | "ldpc-codewords.tsv"
                 | "ldpc-rate-index.tsv"
+                | "vht-ldpc-rate-index.tsv"
+                | "he-ldpc-rate-index.tsv"
+                | "he-ldpc-rate-codewords.tsv"
+                | "he-er106-ldpc-rate-index.tsv"
+                | "he-er106-ldpc-rate-codewords.tsv"
+                | "he-er242-ldpc-rate-index.tsv"
+                | "he-er242-ldpc-rate-codewords.tsv"
+                | "he-qam-index.tsv"
+                | "he-ldpc-tones.tsv"
+                | "he-ldpc-iq-index.tsv"
+                | "he-ldpc-partial-index.tsv"
+                | "he-ldpc-iq-invalid-index.tsv"
+                | "he-midamble-iq-index.tsv"
+                | "he-midamble-iq-invalid-index.tsv"
+                | "he-dcm-metrics.tsv"
+                | "he-dcm-iq-index.tsv"
+                | "he-dcm-iq-invalid-index.tsv"
+                | "vht-ldpc-iq-index.tsv"
+                | "vht-stbc-iq-index.tsv"
+                | "vht-stbc-iq-invalid-index.tsv"
+                | "vht-ldpc-iq-invalid-index.tsv"
+                | "vht-ldpc-rate-codewords.tsv"
                 | "ldpc-rate-codewords.tsv"
                 | "dsss-index.tsv"
                 | "dsss-manifest.json"
@@ -8624,93 +8783,93 @@ fn assert_fixture_filename_convention(relative: &Path) {
         }
         let base_name = strip_allowed_suffix(file_name, &[".cs8", ".psdu", ".json"]);
         assert!(
-            include_str!("fixtures/iq/ofdm-index.tsv")
-                .lines()
-                .skip(1)
-                .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
-                .chain(include_str!("fixtures/iq/ht-bcc-index.tsv").lines().skip(1))
-                .chain(
-                    include_str!("fixtures/iq/ht-extension-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-extension-ampdu-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-stbc-invalid-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-stbc-ampdu-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-stbc-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-greenfield-ampdu-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-greenfield-invalid-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-greenfield-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-ampdu-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-ldpc-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-ldpc-invalid-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ht-mixed-index.tsv")
-                        .lines()
-                        .skip(1)
-                )
-                .chain(
-                    include_str!("fixtures/iq/ofdm-transmit-index.tsv")
-                        .lines()
-                        .skip(1),
-                )
-                .chain(
-                    include_str!("fixtures/iq/dsss-transmit-index.tsv")
-                        .lines()
-                        .skip(1),
-                )
-                .any(|line| {
-                    let mut fields = line.split('\t');
-                    fields.next() == Some(base_name) || fields.next() == Some(base_name)
-                })
-                || serde_json::from_str::<serde_json::Value>(include_str!(
-                    "fixtures/iq/ofdm-clock-manifest.json"
-                ))
-                .unwrap()["fixtures"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|entry| entry["name"].as_str() == Some(base_name)),
+            [
+                include_str!("fixtures/iq/ofdm-index.tsv"),
+                include_str!("fixtures/iq/dsss-index.tsv"),
+                include_str!("fixtures/iq/he-mu-compressed-iq-index.tsv"),
+                include_str!("fixtures/iq/he-mu-ampdu-iq-index.tsv"),
+                include_str!("fixtures/iq/he-mu-mixed-iq-index.tsv"),
+                include_str!("fixtures/iq/he-mu-stbc-iq-index.tsv"),
+                include_str!("fixtures/iq/he-mu-data-iq-index.tsv"),
+                include_str!("fixtures/iq/he-tb-data-iq-index.tsv"),
+                include_str!("fixtures/iq/he-tb-multi-iq-index.tsv"),
+                include_str!("fixtures/iq/he-tb-exchange-index.tsv"),
+                include_str!("fixtures/iq/he-tb-exchange-quality.tsv"),
+                include_str!("fixtures/iq/he-tb-ht-exchange-index.tsv"),
+                include_str!("fixtures/iq/he-tb-vht-exchange-index.tsv"),
+                include_str!("fixtures/iq/he-tb-he-exchange-index.tsv"),
+                include_str!("fixtures/iq/he-tb-multi-exchange-index.tsv"),
+                include_str!("fixtures/iq/he-tb-mu-carrier-exchange-index.tsv"),
+                include_str!("fixtures/iq/he-tb-trs-exchange-index.tsv"),
+                include_str!("fixtures/iq/eht-tb-exchange-index.tsv"),
+                include_str!("fixtures/iq/ht-bcc-index.tsv"),
+                include_str!("fixtures/iq/he-dcm-iq-index.tsv"),
+                include_str!("fixtures/iq/he-dcm-iq-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-midamble-iq-index.tsv"),
+                include_str!("fixtures/iq/he-midamble-iq-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-ldpc-iq-index.tsv"),
+                include_str!("fixtures/iq/he-ldpc-partial-index.tsv"),
+                include_str!("fixtures/iq/he-ldpc-iq-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-ampdu-iq-index.tsv"),
+                include_str!("fixtures/iq/he-bcc-iq-index.tsv"),
+                include_str!("fixtures/iq/he-bcc-iq-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-stbc-iq-index.tsv"),
+                include_str!("fixtures/iq/he-stbc-iq-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-training-sparse-index.tsv"),
+                include_str!("fixtures/iq/he-er106-training-index.tsv"),
+                include_str!("fixtures/iq/he-mu-training-index.tsv"),
+                include_str!("fixtures/iq/he-mu-stbc-training-index.tsv"),
+                include_str!("fixtures/iq/he-mu-stbc-training-long-index.tsv"),
+                include_str!("fixtures/iq/he-training4-index.tsv"),
+                include_str!("fixtures/iq/he-training4-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-er-prefix-index.tsv"),
+                include_str!("fixtures/iq/he-er-iq-index.tsv"),
+                include_str!("fixtures/iq/he-er106-iq-index.tsv"),
+                include_str!("fixtures/iq/he-er106-iq-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-er-iq-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-er-prefix-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-su-prefix-index.tsv"),
+                include_str!("fixtures/iq/he-mu-prefix-index.tsv"),
+                include_str!("fixtures/iq/he-tb-prefix-index.tsv"),
+                include_str!("fixtures/iq/he-tb-prefix-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-sigb-iq-index.tsv"),
+                include_str!("fixtures/iq/he-mu-prefix-invalid-index.tsv"),
+                include_str!("fixtures/iq/he-su-prefix-invalid-index.tsv"),
+                include_str!("fixtures/iq/vht-stbc-iq-index.tsv"),
+                include_str!("fixtures/iq/vht-stbc-iq-invalid-index.tsv"),
+                include_str!("fixtures/iq/vht-ldpc-iq-index.tsv"),
+                include_str!("fixtures/iq/vht-ldpc-iq-invalid-index.tsv"),
+                include_str!("fixtures/iq/vht-ampdu-iq-index.tsv"),
+                include_str!("fixtures/iq/vht-bcc-iq-index.tsv"),
+                include_str!("fixtures/iq/vht-bcc-iq-invalid-index.tsv"),
+                include_str!("fixtures/iq/ht-extension-index.tsv"),
+                include_str!("fixtures/iq/ht-extension-ampdu-index.tsv"),
+                include_str!("fixtures/iq/ht-stbc-invalid-index.tsv"),
+                include_str!("fixtures/iq/ht-stbc-ampdu-index.tsv"),
+                include_str!("fixtures/iq/ht-stbc-index.tsv"),
+                include_str!("fixtures/iq/ht-greenfield-ampdu-index.tsv"),
+                include_str!("fixtures/iq/ht-greenfield-invalid-index.tsv"),
+                include_str!("fixtures/iq/ht-greenfield-index.tsv"),
+                include_str!("fixtures/iq/ht-ampdu-index.tsv"),
+                include_str!("fixtures/iq/ht-ldpc-index.tsv"),
+                include_str!("fixtures/iq/ht-ldpc-invalid-index.tsv"),
+                include_str!("fixtures/iq/ht-mixed-index.tsv"),
+                include_str!("fixtures/iq/ofdm-transmit-index.tsv"),
+                include_str!("fixtures/iq/dsss-transmit-index.tsv"),
+            ]
+            .into_iter()
+            .flat_map(|index| index.lines().skip(1))
+            .any(|line| {
+                let mut fields = line.split('\t');
+                fields.next() == Some(base_name) || fields.next() == Some(base_name)
+            }) || serde_json::from_str::<serde_json::Value>(include_str!(
+                "fixtures/iq/ofdm-clock-manifest.json"
+            ))
+            .unwrap()["fixtures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["name"].as_str() == Some(base_name)),
             "IQ fixture {relative_str} must appear in the independent vector inventory"
         );
         return;

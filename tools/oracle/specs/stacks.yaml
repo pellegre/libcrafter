@@ -383,6 +383,7 @@ stacks:
       - dot11-protected-raw
       - dot11-management-basic
       - dot11-control-basic
+      - dot11-trigger-header
       - dot11-unknown-subtype-raw
       - pcap-scapy-dot11
       - pcap-crafter-dot11

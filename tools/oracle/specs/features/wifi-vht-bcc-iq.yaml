@@ -1,0 +1,29 @@
+version: 1
+kind: feature
+name: wifi_vht_bcc_iq
+summary: Independent complete VHT20 single-stream BCC waveforms and IQ recovery.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: complete-waveform
+    source: IEEE 802.11-2020 9.7.1, 10.12.6-8, 21.3.8, 21.3.10, 21.3.20 and 21.5
+    checks: [legacy_preamble_acquisition, signal_a_bpsk_qbpsk, signal_b_service_crc, vht_training, vht_pilot_sequence, field_power_normalization, mcs_0_through_8, both_guard_intervals, short_gi_disambiguation, phy_and_mac_padding, smpdu_fcs, frequency_offset_and_multipath, exact_psdu_bytes]
+  - name: bounded-admission
+    checks: [invalid_header_crc, invalid_reserved_bit, invalid_lsig_length, inconsistent_sig_b_service, unsupported_width_and_coding, truncated_fields, unusable_training, checked_sample_coordinates, header_only_receive_extent]
+  - name: streaming-reception
+    checks: [public_wifi_decoder, shared_candidate_buffer_bound, individual_fcs_valid_mpdus, vht_signaling_metadata, chunk_independence, gap_reset, output_limit, legacy_ht_compatibility, multi_mpdu_iq, duplicate_mpdu_occurrences, bad_fcs_resynchronization, mpdu_above_4095_bytes]
+  - name: artifact-admission
+    checks: [frame_limit_through_16383, above_wire_limit_rejected, zero_and_overflow_rejected, legacy_limits_preserved]
+coverage_cases: [wifi-vht20-bcc-iq]
+supported_cases:
+  - {name: wifi-vht20-bcc-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Initial SISO BCC waveform coverage does not qualify STBC, LDPC, MU, HE, EHT or hardware interoperability.
+      - WifiDecoder recovers the 108 complete independent S-MPDU waveforms and 54 multi-MPDU waveforms at three chunk sizes, with no supplied timing/CFO hints. Invalid/unsupported signaling, gap resets and output/buffer limits are tested separately.
+      - Header-only admission derives the same receive extent from the first 240 samples at L-SIG for all 108 waveforms; SIG-B/SERVICE integrity remains a later payload check, not an admission guarantee.
+      - Typed SIG-A and SERVICE-verified SIG-B metadata follow recovered frames through the packet adapter. Example VHT header records explicitly do not establish MAC integrity. VHT reference comparison and hardware qualification remain pending.

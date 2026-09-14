@@ -592,6 +592,9 @@ fn dot11_address_roles_map_supported_control_frames() {
         Dot11::rts().addr1(ra).addr2(ta),
         Dot11::block_ack_request().addr1(ra).addr2(ta),
         Dot11::block_ack().addr1(ra).addr2(ta),
+        Dot11::control(Dot11ControlSubtype::Trigger)
+            .addr1(ra)
+            .addr2(ta),
     ] {
         assert_eq!(frame.receiver(), Some(ra));
         assert_eq!(frame.transmitter(), Some(ta));
@@ -608,7 +611,7 @@ fn dot11_address_roles_map_supported_control_frames() {
     assert_eq!(cf_end.transmitter(), Some(ta));
     assert_eq!(cf_end.bssid(), Some(ta));
 
-    let unsupported = Dot11::control(Dot11ControlSubtype::Trigger)
+    let unsupported = Dot11::control(Dot11ControlSubtype::Unknown(0))
         .addr1(ra)
         .addr2(ta);
     assert_eq!(unsupported.receiver(), None);

@@ -1,0 +1,20 @@
+version: 1
+kind: feature
+name: wifi_he_mu_compressed_data
+summary: Compressed HE20 one-user signaling through FCS-qualified DATA reception.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: compressed-data
+    source: IEEE 802.11ax-2021 27.3.11.8.4 and Table 27-28
+    checks: [no_common_field, one_non_mu_user, sig_b_modes, inferred_sig_b_duration, payload_modes, guards, bad_fcs, bad_user_crc, chunking]
+coverage_cases: [wifi-he-mu-compressed-data]
+supported_cases:
+  - {name: wifi-he-mu-compressed-data, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - One non-STBC user on a 242-tone RU. Not a claim of multi-user spatial separation or live HE qualification.

@@ -1,6 +1,6 @@
 {
   "schema": "crafter.wifi-phy-evidence/v1",
-  "reviewed_at": "2026-09-12",
+  "reviewed_at": "2026-09-13",
   "scope": "Raw Wi-Fi PHY bytes; RX correctness before performance and TX",
   "rfc_discovery": {
     "query": "IEEE 802.11 Wi-Fi PHY",
@@ -9,6 +9,14 @@
     "note": "RFC discovery yielded no PHY authority. IEEE publications supply the evidence below."
   },
   "sources": [
+    {
+      "id": "radiotap-vht-metadata",
+      "classification": "capture-metadata",
+      "authority_url": "https://www.radiotap.org/fields/VHT.html",
+      "retrieval_url": "https://raw.githubusercontent.com/radiotap/radiotap.github.io/master/fields/VHT.md",
+      "status": "complete_field_definition_reviewed",
+      "related_url": "https://raw.githubusercontent.com/radiotap/radiotap.github.io/master/fields/A-MPDU%20status.md"
+    },
     {
       "id": "radiotap-ht-metadata",
       "classification": "capture-metadata",
@@ -52,9 +60,185 @@
       "doi": "10.1109/IEEESTD.2024.11090080",
       "status": "publication_verified_full_text_requires_ieee_sign_in",
       "reviewed_clauses": []
+    },
+    {
+      "id": "ieee-tgbe-usig-draft-text",
+      "classification": "official-working-group-draft-text",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-0049-01-00be-pdt-phy-update-to-preamble-u-sig-for-d0-3.docx",
+      "sha256": "e9264fc06fd5020f81f1b6e1565b8c54d3d845c98cf2abb32ce13b3710fc38e6",
+      "status": "selected_normative_text_reviewed_final_publication_audit_pending",
+      "reviewed_clauses": ["36.3.11.7 U-SIG content, CRC, encoding and modulation"]
+    },
+    {
+      "id": "ieee-tgbe-usig-lb275-resolution",
+      "classification": "official-working-group-ballot-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/23/11-23-1425-01-00be-lb275-comment-resolution-on-u-sig.docx",
+      "sha256": "15c3464bd3f244384beff217a99ab7a3f97a6569bf44cd125fd7e1bbaab5b56a",
+      "status": "reviewed",
+      "reviewed_clauses": ["36.3.12.7.2 U-SIG content"]
+    },
+    {
+      "id": "ieee-tgbe-eht-preamble-draft-text",
+      "classification": "official-working-group-draft-text",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-0002-02-00be-pdt-phy-eht-preamble-l-stf-l-ltf-l-sig-and-rl-sig-update.docx",
+      "sha256": "24c587e3051df798b77a331ed87705df2367d7795323bbe42f0d727c0250e2c5",
+      "status": "selected_normative_text_reviewed_final_publication_audit_pending",
+      "reviewed_clauses": ["EHT L-SIG and RL-SIG"]
+    },
+    {
+      "id": "ieee-tgbe-rlsig-cc36-resolution",
+      "classification": "official-working-group-comment-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-1101-01-00be-cc36-cr-for-36-3-12-6-rl-sig.docx",
+      "sha256": "5893d143ca57349daba0490fb9bdb4f5ee5bdc6e8094da947e2f0feef3804c82",
+      "status": "reviewed",
+      "reviewed_clauses": ["36.3.12.6 RL-SIG"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-draft-text",
+      "classification": "official-working-group-draft-text",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-0140-02-00be-pdt-eht-preamble-eht-sig-for-d04.docx",
+      "sha256": "b2acffb28a801577a9163c2feab706c3b943221ef0856974731ecdffd185ae8a",
+      "status": "selected_normative_text_reviewed_final_publication_audit_pending",
+      "reviewed_clauses": ["36.3.11.8.4-5 EHT-SIG content and non-OFDMA encoding"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-crc-resolution",
+      "classification": "official-working-group-comment-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-1148-01-00be-pdt-eht-sig-crc-reference.doc",
+      "sha256": "11b26b9879271dd9ebf4c5fbca871773e3fc2507d7cc7f5afa4f327638cd6a10",
+      "status": "reviewed",
+      "reviewed_clauses": ["Table 36-38 EHT-SIG encoding-block CRC"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-user-block-resolution",
+      "classification": "official-working-group-comment-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-0298-03-00be-cr-on-d0-3-eht-sig-36-3-11-8-5.doc",
+      "sha256": "6511c3f99863eb62b2a731bf29d257b608e37ca41577a1fcaccd23eb08f176a3",
+      "status": "reviewed",
+      "reviewed_clauses": ["36.3.11.8.5 non-OFDMA User Block construction"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-mu-user-resolution",
+      "classification": "official-working-group-ballot-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/23/11-23-0533-02-00be-lb271-cr-for-eht-sig-part-2.doc",
+      "sha256": "b93f14d8706ef5d5e32d1776fb8d5a8d2b645cd30e3f359a1ae9c1bc1db2f3ca",
+      "status": "reviewed",
+      "reviewed_clauses": ["Table 36-41 MU-MIMO User field"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-sa-resolution",
+      "classification": "official-working-group-ballot-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/24/11-24-0260-01-00be-sa-ballots-cr-for-eht-sig-and-annex-z.docx",
+      "sha256": "cf3644a31e3472aa1e593dbd384833d2178e501b82a8d3fcdd580ee4d9691b0a",
+      "status": "reviewed",
+      "reviewed_clauses": ["D5 first EHT-SIG encoding-block example"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-encoding-resolution",
+      "classification": "official-working-group-comment-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-1386-01-00be-eht-sig-cr-on-p802-11be-d1-0-36-3-12-8-6.doc",
+      "sha256": "63f5e0ad19d8f428eb99747abb94e75aa638478c6b9a027befbbc2632faced24",
+      "status": "reviewed",
+      "reviewed_clauses": ["36.3.12.8.6 coding rate and interleaver clarification"]
     }
   ],
   "facts": [
+    {
+      "id": "eht-preamble-classification",
+      "source": "ieee-tgbe-eht-preamble-draft-text",
+      "anchor": "L-SIG and RL-SIG draft text; later CC36 resolution 11-21/1101r1",
+      "fact": "An EHT PPDU uses a 6 Mb/s L-SIG whose LENGTH is divisible by three, followed by an RL-SIG that repeats L-SIG. This combination separates EHT from non-HT, HT, VHT and HE before the two BPSK U-SIG symbols are interpreted. A 20 MHz observation can recover duplicated pre-EHT signaling even when U-SIG declares a wider PPDU, but that does not make the uncaptured wider DATA recoverable."
+    },
+    {
+      "id": "eht-usig-fields",
+      "source": "ieee-tgbe-usig-draft-text",
+      "anchor": "36.3.11.7 Tables36-19/21; CRC computation; encoding and modulation; later LB275 resolution 11-23/1425r1",
+      "fact": "EHT U-SIG carries two 26-bit parts, encoded continuously with rate-half BCC and the 52-tone interleaver. Its CRC protects the first 42 information bits and is followed by six zero tail bits. PHY version zero identifies EHT. UL/DL together with the two-bit PPDU type distinguishes EHT MU OFDMA, single-user, non-OFDMA MU-MIMO and EHT TB interpretations. For EHT MU, the version-dependent fields also carry puncturing information, EHT-SIG MCS and EHT-SIG symbol count; for EHT TB they carry two spatial-reuse values. The current parser checks integrity and Validate states but does not itself admit or decode EHT DATA. Published-standard clause review remains required before final qualification."
+    },
+    {
+      "id": "eht-sig-non-ofdma-first-block",
+      "source": "ieee-tgbe-eht-sig-draft-text",
+      "anchor": "36.3.11.8.4-5; Table 36-38 in 11-21/1148r1; D5 example in 11-24/0260r1",
+      "fact": "The first 52-bit EHT-SIG encoding block for non-OFDMA signaling contains 20 common bits, the first 22-bit user field, a four-bit CRC over the preceding 42 bits, and six zero tail bits. The common portion carries spatial reuse, EHT-LTF size and guard interval, EHT-LTF count, LDPC-extra-symbol, pre-FEC padding, packet-extension disambiguity, Disregard bits, and number of users. The published D5 example's protected bits independently produce CRC 1110. A single-user field carries STA-ID, MCS, NSS, beamforming, coding, and a preserved reserved/disregard bit. For non-OFDMA MU-MIMO, the first and remaining fields instead carry STA-ID, MCS, coding, and a raw spatial-configuration index; remaining users are grouped into independently protected one- or two-user blocks. The bit and IQ receivers cover complete chains of two through eight MU-MIMO users and reset BCC for every independently terminated block. OFDMA and EHT DATA remain separate work. Published-standard clause review remains required before final qualification."
+    },
+    {
+      "id": "eht-sig-encoding-modulation",
+      "source": "ieee-tgbe-eht-sig-encoding-resolution",
+      "anchor": "36.3.12.8.6; related waveform equation and content-channel text in 11-21/0140r2",
+      "fact": "EHT-SIG MCS values 0, 1, 3 and 15 all use rate-one-half BCC. MCS15 is MCS0 with DCM. EHT-SIG uses the same BCC interleaver parameters as HE-SIG-A/HE-SIG-B, 52 data tones per 4 microsecond OFDM symbol, an 0.8 microsecond guard interval, and pilot sequence position n+4. Its upper-half PAPR rotation follows the HE-SIG-B rule except that MCS15 uses unity PAPR rotation. For a 52-bit single-user encoding block in 20 MHz, the resulting EHT-SIG lengths are two, one, one and four symbols for MCS0, MCS1, MCS3 and MCS15 respectively."
+    },
+    {
+      "id": "vht-one-data-stream-stbc",
+      "source": "ieee-80211-2020",
+      "anchor": "Tables 21-10/11/20; 21.3.8.3.5 Equations 21-40/41/43; 21.3.8.3.6 Equation 21-47; 21.3.10.10 Equation 21-91",
+      "fact": "VHT SU STBC maps one DATA stream to two space-time streams using the same conjugate-pair operation as HT. Two VHT-LTF data columns use the first two HT P-matrix columns, but every training pilot row repeats P's first row. Thus the two training pilot observations are the combined channel and its negative. SIG-B DATA uses the first P column, and its pilots are common across streams; for two streams both observe the combined channel. VHT20 DATA pilots use the single-stream rotating pattern regardless of STBC, unlike HT's two-stream pilot patterns. With two transmit chains, pre-VHT cyclic shifts are 0/-200 ns and VHT shifts are 0/-400 ns."
+    },
+    {
+      "id": "vht-ldpc-receive-length",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.20 Equations 21-107/108; forward construction 21.3.10.5.4",
+      "fact": "VHT LDPC receive length is the whole-octet capacity after removing the 16 SERVICE bits from initial-symbol-count times NDBPS; unlike BCC it removes no tail bits. The LDPC extra flag accounts for one extra symbol without STBC or two with STBC, consistently with the forward coding procedure. A decoded SIG-B must be checked against the CRC carried in descrambled SERVICE; final incomplete octets are discarded as padding."
+    },
+    {
+      "id": "vht-su-ldpc-rate-and-tones",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.10.5.4 Equations 21-61/62/63; 21.3.10.9.2 Table 21-19 and Equations 21-85/86",
+      "fact": "VHT SU LDPC reuses HT codeword selection and rate matching, but its encoded information includes scrambled SERVICE, PSDU and PHY padding. Npld is initial symbol count times NDBPS; initial symbols round (8*APEP_LENGTH+16) up to an STBC symbol group, and initial available coded bits are that count times NCBPS. SIG-A's extra-symbol bit records whether the puncturing rule adds a symbol group. For VHT20, LDPC tone mapping permutes whole constellation symbols with distance 4: input tone index k goes to 4*(k mod 13)+floor(k/13). BCC does not use this mapping."
+    },
+    {
+      "id": "radiotap-vht-known-fields",
+      "source": "radiotap-vht-metadata",
+      "anchor": "VHT field 21 known/flags, bandwidth and mcs_nss tables; A-MPDU field 20 EOF flags",
+      "fact": "VHT metadata is 12 bytes aligned to two bytes. GI and bandwidth validity use known bits 0x0004 and 0x0040; STBC, disambiguation, LDPC extra symbol, beamforming, group ID and partial AID have distinct validity bits. Radiotap bandwidth value 0 denotes 20 MHz; these codes are not SIG-A bandwidth codes. Each user byte has NSS in its low nibble and MCS in its high nibble; NSS zero invalidates that user's MCS/coding and MCS 15 means unknown. A present user's coding bit is meaningful without a separate known bit. NSS differs from NSTS when STBC is used. Group 0/63 means SU when group is known. A-MPDU EOF is meaningful only with flag 0x0080; its value is flag 0x0040."
+    },
+    {
+      "id": "vht-aggregate-framing",
+      "source": "ieee-80211-2020",
+      "anchor": "9.7.1-2 Table 9-527 Figure 9-976; 10.12.6-8",
+      "fact": "VHT delimiter B2..3 carry the high two length bits and B4..15 the low twelve; B0 is EOF and B1 reserved. EOF=1/nonzero length marks an S-MPDU, which must be the only nonzero-length subframe. EOF=1/zero length marks padding and cannot precede an S-MPDU. No EOF=0 subframe may follow EOF=1. Final alignment padding and zero to three trailing EOF octets have unspecified contents. The HT 65535-octet total limit does not apply to VHT; its 1048575-octet limit is pre-EOF."
+    },
+    {
+      "id": "vht20-siso-waveform",
+      "source": "ieee-80211-2020",
+      "anchor": "Table 21-8; Equations 21-28/29/36/47/91/95; 9.7.1; 10.12.6-8; 21.3.20 Equations 21-104/105/106",
+      "fact": "VHT-SIG-A uses BPSK then QBPSK data tones with unrotated pilots p1,p2. VHT-STF20 equals HT-STF20 and VHT-LTF20 equals HT-LTF20. VHT-SIG-B uses p3/P0; DATA uses p[n+4]/P[n]. Tone scaling uses 52 for L-LTF/L-SIG/SIG-A and 56 for VHT-LTF/SIG-B/DATA. A single nonzero-length delimiter may carry EOF=1 (S-MPDU); final subframe padding, EOF padding delimiters and trailing octets fill PSDU capacity under 10.12.6. RX symbol and PSDU length equations confirm the previously reviewed timing and BCC layout."
+    },
+    {
+      "id": "vht-bcc-data-layout",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.10.1-5; 21.4.3 Equation 21-112",
+      "fact": "For VHT BCC with one encoder, DATA consists of 16 SERVICE bits, PSDU, zero through seven PHY pad bits, then six zero tail bits. SERVICE/PSDU/pad are scrambled with a nonzero seed; tail is not scrambled. PSDU length is floor((NSYM*NDBPS-22)/8). SERVICE bits 0-7 are zero and bits 8-15 carry the SIG-B CRC, c7 first. The final BCC trellis state is zero, unlike the existing HT layout with scrambled padding after its tail."
+    },
+    {
+      "id": "vht20-one-stream-mcs",
+      "source": "ieee-80211-2020",
+      "anchor": "21.5 Table 21-29",
+      "fact": "For 20 MHz and one spatial stream, MCS 0-7 have 52 data tones and the same per-symbol coding/modulation dimensions as HT MCS 0-7. MCS 8 uses 256-QAM, rate 3/4, 416 coded bits and 312 data bits per symbol, with one BCC encoder. MCS 9 is explicitly not valid for this bandwidth and spatial-stream count."
+    },
+    {
+      "id": "vht-256qam-constellation",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.10.9.1; Figures 21-24 through 21-27, printed pages 3079-3082",
+      "fact": "Visually reviewed all four quadrants. Each axis uses levels -15,-13,-11,-9,-7,-5,-3,-1,1,3,5,7,9,11,13,15 with first-transmitted-bit-first labels 0000,0001,0011,0010,0110,0111,0101,0100,1100,1101,1111,1110,1010,1011,1001,1000. The first four bits label I and the next four Q. Complex constellation normalization is 1/sqrt(170)."
+    },
+    {
+      "id": "vht-receive-timing",
+      "source": "ieee-80211-2020",
+      "anchor": "Tables 21-5/12/13; 21.3.8.2.4 Equation 21-24; 21.3.10.9.4; 21.4.3 Equations 21-109/110",
+      "fact": "VHT uses 6 Mb/s L-SIG, whose length is three times the four-microsecond duration units after the initial 20 microseconds, minus three. VHT-LTF counts for 1..8 space-time streams are 1,2,4,4,6,6,8,8. DATA begins at 36+4*NLTF microseconds. Short-GI DATA has 3.6-microsecond symbols but its signaled duration rounds up to four-microsecond units. SIG-A disambiguation is one exactly when short GI is used and NSYM mod 10 equals 9. DATA symbol end and signaled duration can differ. STBC requires even symbol groups."
+    },
+    {
+      "id": "vht20-signal-b-service",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.8.3.6 Tables 21-14/15 and Equation 21-46; 21.3.10.2-3 Table 21-16 and Equation 21-59; 21.3.10.8; 21.3.12",
+      "fact": "VHT20 SIG-B has 20 field bits and six zero tail bits. SU uses 17 length bits and three reserved ones; MU uses 16 length bits and four MCS bits. Length is ceil(APEP_LENGTH/4). VHT NDP is SU, has no DATA, and uses the fixed pre-tail pattern 00000111010001000010. In MU that same pattern is ordinary length/MCS data. SIG-B's CRC covers its first 20 bits and is transmitted c7 first in descrambled SERVICE bits 8..15; SERVICE bits 0..7 are zero. The 20 MHz one-stream BPSK interleaver uses 13 columns and four rows. SIG-B parsing alone cannot assert CRC integrity."
+    },
+    {
+      "id": "vht-signal-a-fields",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.8.3.3, Table 21-12, Figures 21-18/19/20",
+      "fact": "VHT-SIG-A consists of two 24-bit parts, BCC encoded together at rate one-half and interleaved per 48-tone symbol. The first symbol's data tones use BPSK and the second QBPSK. Group IDs 0 and 63 select SU field interpretation; other IDs select four MU user positions. CRC covers the first 34 bits using the HT polynomial, followed by six zero tail bits. Bandwidth code 3 does not distinguish contiguous 160 MHz from 80+80 MHz. Header integrity alone does not admit the DATA configuration."
+    },
     {
       "id": "ht-extension-training-data-boundary",
       "source": "ieee-80211-2020",
@@ -142,10 +326,130 @@
       "fact": "HT-STF duration is 4 microseconds; its 20 MHz frequency sequence is identical to L-STF."
     },
     {
+      "id": "he-bcc-iq",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.8/9/13/14; Tables27-35/42/43; Equations27-104/108; 27.3.13",
+      "fact": "242RU nonDCM BCC interleaving uses26 columns and9*NBPSCS rows with VHT permutations. BPSK through256QAM reuse VHT constellation mapping. Pilot tones are -116,-90,-48,-22,22,48,90,116; pilot values rotate [1,1,1,-1,-1,1,1,1] by DATA symbol index. SU DATA uses legacy polarity index n+4. One-stream/one-RU waveform normalization is1/sqrt242. Packet extension has arbitrary content but DATA average power. This kernel does not yet publish MAC frames."
+    },
+    {
+      "id": "he-bcc-payload",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.1-5; references17.3.5.5/6 and19.3.11.6",
+      "fact": "HE BCC uses one encoder. SERVICE and PSDU plus pre-FEC PHY padding are scrambled; six zero tail bits follow that padding and terminate the encoder. Puncturing uses the legacy1/2,2/3,3/4 patterns and HT5/6 pattern. Post-FEC padding follows meaningful coded bits in each last STBC-group symbol. DCM BPSK/NSS1 inserts one arbitrary filler after2*NDBPS coded bits:50 for106RU or116 for242RU. ER context must be established before using the shared bandwidth field as an RU selector. SERVICE is16 zero bits before scrambling with a nonzero seed. These facts do not establish IQ or MAC/FCS qualification."
+    },
+    {
+      "id": "he-su-capacity",
+      "source": "ieee-80211ax-2021",
+      "anchor": "Tables27-33/79-86; 27.3.12.5/9/12; Equations27-60-74/140-143",
+      "fact": "HE20 SU uses234 data tones, or117 with DCM. DCM supports MCS0/1/3/4 with1/2 spatial streams and noSTBC. BCC is limited to MCS0-9 and<=4 spatial streams; MCS10/11 requireLDPC. Short padding segments use60 or30 data tones. PSDU length floors the data budget minus16SERVICE bits and6BCC tail bits to octets; LDPC has no tail. LDPC extra-segment signaling advances padding factor or wraps4to1 while adding one STBC symbol group; receiver reverses that adjustment for the payload budget. DCM BPSK/NSS1 uses58 data bits per symbol and BCC inserts one arbitrary filler after116 coded bits."
+    },
+    {
+      "id": "he-su-timing",
+      "source": "ieee-80211ax-2021",
+      "anchor": "Table27-12; 27.3.11.10; 27.3.12.12/16; Equations27-11/112/118-122",
+      "fact": "SU uses m=2 in L-SIG duration. HE preamble in receiver duration inversion excludes legacy20us and includes RL-SIG, SIG-A, STF and LTF symbols. Receiver symbol count floors the duration quotient then subtracts PE disambiguity; PE duration floors the remaining duration to4us increments. Midambles repeat the initial HE-LTF field every10 or20 DATA symbols with NSTS<=4, but are omitted before a sole final DATA symbol or after the last symbol. STBC is restricted to one spatial stream/two space-time streams without DCM. This timing implementation does not establish DATA decoding or MIMO reception."
+    },
+    {
+      "id": "he-er-payload-capacity",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.1.1; 27.3.2; Table27-33 (printed596 visually checked); 27.3.12.5.1; Equations27-60-74/140-143",
+      "fact": "ER supports one DATA stream, MCS0-2 on242 tones and only MCS0 on upper106. The106 allocation has102 DATA tones, halved to51 for DCM; its short segments use24 or12 DATA tones. BPSK/DCM data bits per full symbol floor to25 for106 or58 for242. With BCC a filler follows2*NDBPS coded bits. Format-aware capacity arithmetic preserves SU bandwidth semantics, reverses LDPC extra-segment signaling for PSDU length, and checks STBC grouping. Independent forward padding fixtures do not establish upper106 IQ recovery."
+    },
+    {
+      "id": "he-er-242-training-data",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.10; 27.3.11.10 Equation27-58; 27.3.12.14 Equation27-108; 27.3.12.16",
+      "fact": "ER STF/LTF amplitudes are boosted by sqrt2 relative to DATA; the receiver divides trained channel estimates by sqrt2. Midambles repeat the initial LTF and require the same correction. DATA pilot polarity uses n+2+N_HE-SIG-A+N_HE-SIG-B, hence n+6 for ER's four-symbol SIG-A with no SIG-B. The242-tone DATA mapping, BCC/LDPC, DCM and STBC kernels share SU geometry after ER timing and scaling are restored. Independent complete waveforms validate raw bytes and aggregate FCS offline, not RF interoperability."
+    },
+    {
+      "id": "he-er-su-timing",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.1.1; Table27-12; Equations27-11/118-122 (printed622 visually checked)",
+      "fact": "ER SU uses m=1 in L-SIG duration and four SIG-A symbols (16us), adding160 samples at20Msps relative to SU. Duration inversion uses (L_LENGTH+4)/3 legacy symbols, with a preamble160 samples longer. ER supports one DATA stream, optionally mapped to two space-time streams with STBC. Its242-tone and upper106-tone allocations share the DATA symbol clock and preamble duration. Independent forward timelines check DATA, midamble and PE offsets; this primitive does not establish ER payload recovery."
+    },
+    {
+      "id": "he-su-sparse-training",
+      "source": "ieee-80211ax-2021",
+      "anchor": "Table 27-31; Equations 27-5/40/41/42/58; Table 27-12; printed536 visually checked",
+      "fact": "HE20 SU 1x training uses 60 active tones at multiples of four and a 64-sample useful period with 800ns GI. 2x uses 122 even tones and a 128-sample useful period with 800ns or 1600ns GI. Both sequences span signed indices -122 through 122. Equation27-5 defines the HE-LTF normalization denominator as RU size divided by4 or2, without rounding:60.5 and121 for a242-tone RU, not populated-tone counts60 and122. Receiver inference: short-FFT channel gain converts to256-point DATA gain by sqrt(256/NFFT). Regularized finite-delay least-squares fitting is an implementation estimator, not a standard-mandated exact channel reconstruction. It models four precursor samples and delays inside the guard interval; arbitrary channels outside that model are not guaranteed."
+    },
+    {
+      "id": "he-su-training",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.11.9 Equations27-22/23/38; 27.3.11.10 Equations27-43/55-58",
+      "fact": "HE SU STF lasts80 samples at20Msps, using14 nonzero tones at spacing16 with the M sequence times(1+j)/sqrt2 and zero DC. One-stream one-RU normalization is1/sqrt14. The4x HE-LTF sequence has242 nonzero tones at signedindices-122..-2 and2..122; normalization is1/sqrt242. P and R first-row/first-column factors are1 for one stream. 4x training supports800ns or3200ns GI via the SU signaling interpretation; HE fields may have different spatial mapping from pre-HE fields when Beam Change is set."
+    },
+    {
+      "id": "he-transform-periods",
+      "source": "ieee-80211ax-2021",
+      "anchor": "Table 27-12; 27.3.11.10 Equation 27-40",
+      "fact": "The HE DATA DFT period is12.8us with78.125kHz spacing. HE-LTF1x/2x/4x useful durations are3.2/6.4/12.8us. At20Msps these correspond to64/128/256 samples; GI samples are separate. Private natural-order unnormalized forward transforms support subsequent channel estimation and DATA demapping without changing legacy64-point processing."
+    },
+    {
+      "id": "he-data-coding-limits",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.5",
+      "fact": "HE BCC uses one encoder, at most four spatial streams and MCS0-9, with RU sizes at most242 tones. MCS10/11 and larger RUs require LDPC. Header interpretation does not substitute for these DATA admission checks. The IQ prefix corpus selects LDPC for MCS10/11."
+    },
+    {
+      "id": "he-su-prefix",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.11.3-7, Table 27-16, Figure 27-25; 27.3.22",
+      "fact": "HE L-SIG and RL-SIG repeat the same header with valid parity and 6Mb/s rate; LENGTH remainder1 selects SU/TB, with HE-SIG-A Format1 selecting SU. SU HE-SIG-A has two real-axis BPSK symbols. L-SIG edge tones -28,-27,27,28 carry -1,-1,-1,1, repeated in RL-SIG. L-LTF normalization uses52 tones and an additional epsilon=sqrt(52/56), making its per-tone amplitude match 56-tone signaling; L-STF also has that epsilon. Pilot polarities use indices0,1,2,3 for these four signaling symbols. These checks do not establish DATA integrity or admit every signaled mode."
+    },
+    {
+      "id": "he-su-siga-layout",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.11.7.2-4 Tables 27-18 and 27-19; 27.3.12.8 Table 27-35",
+      "fact": "HE SU signaling contains 26+26 bits, with 42 CRC-protected bits, four CRC bits and six zero tail bits. Reserved bits A1.B14 and A2.B14 are one; BCC requires A2.B8 one. Doppler changes NSTS and midamble interpretation. DCM=STBC=1 with GI/LTF code3 means neither applied and 4x LTF with 0.8us GI; other codes in that combination are reserved. Signaling BPSK interleaving uses 13 columns and 4 rows, with continuous rate-half BCC over both symbols. Format context must distinguish SU from MU, TB and ER SU before interpreting these fields."
+    },
+    {
+      "id": "he-ldpc-rate-matching",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.5.2 Equations27-68-74; inherited IEEE802.11-2020 19.3.11.7.5 Table19-16",
+      "fact": "HE encodes scrambled SERVICE, PSDU and pre-FEC padding without BCC tail bits. Initial available coded positions use the last padding segment, not complete OFDM symbols. The inherited puncturing thresholds select an extra segment: initial factor3 adds the remaining full-symbol portion; other factors add one short segment per STBC-group symbol. Factor4 wraps to1 and adds a symbol group. Codeword count/size and shortening precede this adjustment; puncturing is recomputed afterward. Post-FEC padding is excluded from LDPC observations. Rate-matching geometry and codeword tests do not establish HE LDPC IQ reception."
+    },
+    {
+      "id": "he-1024qam-ldpc-tones",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.9 Figures27-37-40; 27.3.12.10 Table27-36 Equation27-95",
+      "fact": "HE 1024-QAM uses five label bits per axis and normalization 1/sqrt(682). For a non-DCM 242-tone RU, LDPC tone mapping has NSD=234 and DTM=9: transmitted data-tone index t(k)=9*(k mod26)+floor(k/26). Indices exclude pilots. Independent constellation and transpose fixtures qualify private demapping primitives, not complete LDPC IQ reception, DCM or spatial-stream separation."
+    },
+    {
+      "id": "he-midamble-channel-refresh",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.16 Equation27-112 Figures27-41-42; 27.3.12.13-14",
+      "fact": "Midambles repeat the preamble HE-LTF fields after groups of10 or20 DATA symbols, excluding after the last symbol and before a sole last symbol. DATA scrambling and encoding do not change. Doppler may be set even when a short PPDU contains no midamble. The receiver reuses the LTF estimator at the independently derived offsets, keeps DATA pilot indices and absolute CFO phase, and resets the residual phase-slope estimate after each refresh. Piecewise FIR-channel fixtures qualify this estimator behavior, not arbitrary Doppler tracking."
+    },
+    {
+      "id": "he-dcm-paired-recovery",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.5.1, 27.3.12.8-10 Tables27-35-36 Equation27-96; Table27-79",
+      "fact": "HE242 DCM pairs117 lower DATA tones with117 upper tones. BPSK upper symbols use sign(-1)^(k+117); QPSK uses conjugation; 16-QAM exchanges adjacent label bits. LDPC permutes each half separately with DTM_DCM=9 before transmission. BCC instead uses13 interleaver columns and9*NBPSCS rows, and BPSK one-stream BCC inserts a filler after116 coded bits. The receiver combines joint label distances weighted by channel power. Supported MCSs are0/1/3/4; DCM cannot be combined with STBC. Table27-79 specifies58 data bits for one-stream DCM BPSK."
+    },
+    {
+      "id": "he-aggregate-tag-order",
+      "source": "ieee-80211ax-2021",
+      "anchor": "9.7.1 Table 9-527; 10.12.6-7; 26.6.2",
+      "fact": "HE shares the split 14-bit MPDU delimiter length with VHT. For nonzero length, EOF/Tag can mark a tagged MPDU within an acknowledgment-enabled aggregate, not necessarily the final frame. Only a zero-length tagged delimiter starts EOF padding; it must not precede a later nonempty MPDU. The raw-byte scanner preserves tags without asserting acknowledgment-context validity, retains FCS, and emits only integrity-valid frames. PHY capacity and caller storage bounds remain separate admission requirements."
+    },
+    {
       "id": "he-siga-crc",
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.11.7.3, Figure 27-24",
       "fact": "HE-SIG-A CRC covers 42 bits. The underlying eight-bit polynomial is inherited from HT, but only four complemented output bits are transmitted, C7 first."
+    },
+    {
+      "id": "he-er-prefix",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.1.1; 27.3.11.3-7/22; Table27-18; Figure27-25; Equations27-11/12/18",
+      "fact": "ER SU uses L-SIG length modulo three equal to two, and A1/A1-R/A2/A2-R signaling. Only A1-R DATA tones are QBPSK. Original halves are interleaved; repeated halves bypass interleaving. Pilots retain the polarity sequence. L-STF/L-LTF have a sqrt(2) boost, L-SIG/RL-SIG boost only their four added edge tones, and SIG-A has no such boost. ER permits one spatial stream, MCS0-2 on242 or MCS0 on upper106 within20MHz; STBC may use two space-time streams. Signaling integrity does not qualify DATA."
+    },
+    {
+      "id": "he-stbc-training-data",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.11.2.2/10, Equations 27-55..58; 27.3.12.12/13; referenced IEEE 802.11-2020 Equation 19-27, Tables 21-11/20",
+      "fact": "HE STBC maps one DATA stream to two space-time streams and excludes DCM. DATA uses the VHT conjugate/sign pair mapping. SU HE-LTF uses P on DATA tones but R (the repeated first P row) on pilots, so pilots do not independently identify the two channels. DATA pilots are copied to both STS before cyclic shifts. Two STS use two training symbols and the second stream has a -400 ns cyclic shift."
     }
   ],
   "unresolved_questions": [

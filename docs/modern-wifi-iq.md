@@ -1,12 +1,13 @@
-# Wi-Fi 4 IQ implementation and evidence
+# Wi-Fi IQ implementation and evidence
 
-The HT20 radio extension recovers raw IEEE 802.11 frame bytes from IQ and
-constructs single-stream transmit IQ from packets. The existing packet, radio
-source, replay, and bounded transmitter interfaces remain the integration
-boundary. Payload processing is separate from physical-layer byte recovery.
+The radio extension recovers raw IEEE 802.11 frame bytes from IQ and constructs
+supported transmit IQ from packets. The existing packet, radio source, replay,
+and bounded transmitter interfaces remain the integration boundary. Payload
+processing is separate from physical-layer byte recovery.
 
-Legacy and HT20 usage and measured coverage are documented in
-[radio.md](radio.md). VHT, HE, and EHT are outside this Wi-Fi 4 implementation.
+Production legacy and HT20 usage and measured coverage are documented in
+[radio.md](radio.md). VHT, HE, and EHT coverage on this branch is experimental
+and backed by deterministic offline evidence rather than live qualification.
 
 ## Scope
 
@@ -16,6 +17,395 @@ one-data-stream STBC, and extension training. Transmission covers the 48
 single-stream combinations of MCS0–7, BCC/LDPC, mixed long/short GI, and
 greenfield long GI. HT40 and additional independent data streams are outside
 the supported matrix.
+
+Current HE receive coverage: `WifiDecoder` and `radio_receive --modern` decode
+HE20 SU, one spatial stream, BCC MCS0–9 and LDPC MCS0–11, with all five supported HE-LTF/guard
+combinations. Repeated L-SIG detection retains the candidate through HE-SIG-A;
+validated headers bound buffering before DATA. Aggregate recovery preserves
+tag bits and received FCS and publishes only checksum-valid MPDUs. HE headers
+are available as `HeSuSignalFields` and `PhyDiagnostic::HeSignal`; receive
+artifacts use `phy: he`, an optional `he` object, and `he_signal` header records.
+
+The one-stream HE SU path also refreshes channel estimates at 10/20-symbol
+midambles, preserving DATA pilot indices and absolute CFO phase. Doppler-marked
+short packets with no inserted midamble are accepted. Independent qualification
+adds 270 complete changing-channel waveforms and 12 invalid training cases.
+
+HE20 SU DCM reception supports one spatial stream, BCC or LDPC, MCS0/1/3/4,
+with the four DCM-compatible training/guard pairs, including midambles.
+Joint constellation metrics combine both tone groups with channel-power
+weights; LDPC restores each half's tone permutation before combination.
+Independent qualification adds 128 complete IQ cases and 660 soft-metric cases.
+The 4x-LTF/800ns signaling escape means no DCM and is not a DCM mode.
+
+HE20 SU STBC reception handles one DATA stream sent through two space-time
+streams, BCC MCS0–9 or LDPC MCS0–11, and the four STBC-compatible guard/LTF
+pairs. It separates channels using two HE-LTF symbols, excludes single-stream
+training pilots from that separation, tracks DATA phase with the summed pilot
+channel, and combines consecutive DATA symbols. Both symbols in the final
+pair honor post-FEC padding; midambles refresh both channels. Qualification
+adds 368 complete independent waveforms and eight invalid cases, including
+loss of either transmit branch. The finite-delay estimator includes the second
+stream's cyclic shift; it does not guarantee recovery of arbitrary channels.
+
+HE20 TB reception uses a recently recovered, FCS-valid Trigger or TRS Control
+field to obtain the RU, MCS, coding, DCM, training and padding fields that are
+absent from the TB PHY header. The bounded streaming decoder accepts Trigger
+frames carried by legacy OFDM and supported long-GI HT/VHT/HE PPDUs, expands
+eligible scheduled or random-access RUs, and decodes one DATA stream on each
+disjoint RU. It publishes only aggregate members with valid MPDU FCS and records
+the effective user fields, original User Info index, and trigger/response sample
+coordinates.
+
+The exchange corpus covers 65 single-user sequences and 12 simultaneous-user
+sequences with 120 response MPDUs across two, four or nine RUs. It includes
+BCC/LDPC, DCM, STBC, carrier/context failures, duration bounds, output/sample
+limits, and input chunking. Separate HT and VHT carrier corpora cover BCC/LDPC,
+aggregation and the prohibition on short-GI Trigger carriers. Near/far MCS11
+STBC captures whose final CS8 representation has hundreds of genie-aided
+nearest-symbol errors are retained as rejection controls; balanced captures of
+the same modes recover exact bytes without weakening FEC, SERVICE, or FCS.
+
+TRS scheduling derives the response BSS color and DCM from its HE SU, ER SU, or
+MU carrier and derives the required LTF/guard pair from that carrier's timing.
+The response must agree on its symbol count, fixed spatial-reuse value, and
+SIG-A2 reserved bits. Thirteen complete exchanges cover all HE20 RU sizes,
+carrier timing combinations, DCM, and negative association cases.
+
+Distinct compatible Trigger and TRS allocations carried in separate A-MPDUs of
+one HE MU PPDU are combined for the following response. Repeated schedules are
+deduplicated; incompatible common fields and overlapping allocations are not
+used for byte recovery. Five complete multi-A-MPDU exchanges cover these cases.
+
+HE TB reception still lacks spatial separation of overlapping independent DATA
+streams. Wider channels, sustained real-time speed, live HE-capable reference
+qualification and modern TX also remain unfinished.
+
+HE ER SU signaling is recognized separately: repeated L-SIG with length modulo
+three equal to two, a QBPSK second SIG-A symbol, and four SIG-A symbols. Header
+combining restores the originals' interleaving while repeats remain in coded
+order. `PhyDiagnostic::HeErSignal` carries the shared SU/ER header fields;
+its Bandwidth code identifies a 242-tone or upper 106-tone allocation within
+20 MHz, not a wider channel. Receive artifacts use `he.format: er_su` with
+explicit `ru_tones` and `channel_width_mhz`. The 242-tone ER path now recovers
+raw payload bytes and publishes FCS-qualified MAC frames: MCS0-2 with BCC or
+LDPC, DCM on MCS0/1, and one DATA stream including STBC. Training normalization
+accounts for ER's power boost; DATA pilots follow its longer header. Midambles
+refresh the same normalized channel estimates. The upper106-tone allocation
+also recovers MCS0 BCC/LDPC payloads, with applicable DCM, STBC and midambles.
+
+Private format-aware payload-capacity arithmetic now covers upper106 too:
+102 DATA tones (51 with DCM), short padding segments of24 or12 tones, and
+ER-specific MCS/stream restrictions. Allocation-aware training, BCC/LDPC
+recovery and FCS-qualified public frame publication are connected to this path.
+
+The BCC coded-bit kernel also accepts explicit ER context and recovers upper106
+PSDU bytes, removing the DCM filler after50 coded bits rather than116. The
+ER242 and upper106 IQ paths use this entrypoint. The independent upper106
+corpus adds 104 complete waveforms and 16 negative cases; it tests exact
+payload recovery, chunked reception, bounds, and packet/artifact metadata.
+
+HE LDPC reception can retain intact aggregate members after another codeword
+fails. SERVICE validation remains mandatory, each delivered MPDU must pass
+FCS, and surviving frames carry partial-LDPC failure diagnostics. Eighteen
+independent SU/ER242/ER106 waveforms exercise this behavior.
+
+`HeMuSignalFields` decodes MU SIG-A bits and interleaved metrics, with a distinct
+field layout and CRC/tail checks. It preserves the raw SIG-B count because an
+uncompressed value of 15 may mean 16 or more symbols. The 5,280 header cases and
+24 malformed cases qualify this kernel. The public receiver additionally
+recognizes 20 MHz MU prefixes from IQ: repeated legacy headers with length
+modulo three equal to two, followed by two BPSK SIG-A symbols. A distinct
+`HeMuSignal` diagnostic and `he.format: mu` artifact preserve the checked
+fields. The 160 independent prefixes and 13 invalid cases contain no SIG-B or
+DATA; those prefix-only fixtures do not establish payload recovery. The receiver
+retains supported candidates for SIG-B and DATA; incomplete fields report truncation.
+
+`HeSigBCommon20Fields` validates an uncompressed 20 MHz SIG-B common field
+(allocation, CRC, tail) and exposes ordered RU assignments and user counts.
+All 256 allocation codes are tested; reserved and wider-than-20MHz allocations
+produce distinct errors, and empty RUs retain zero users. RU positions identify
+the first table slot, not FFT-bin indices. It is connected to the private SIG-B
+IQ kernel, streaming diagnostics and single-stream-per-RU payload recovery.
+
+`HeSigBUserBlock` checks one/two-user blocks with their shared CRC and tail.
+It returns typed per-user results, preserving a valid neighbor when another
+user has reserved parameters. Allocation context supplies each user's RU-relative
+position; all 48 spatial configurations are mapped to stream counts and starting
+indices. STA-ID 2046 retains arbitrary unused bits. The 3175 independent blocks
+test these cases; global DATA admission constraints remain separate. This is
+still a bit-level kernel, not end-to-end HE MU reception.
+
+The private SIG-B coded-block reader recovers those fields from deinterleaved,
+DCM-combined soft bits for MCS 0 through 5. It preserves puncturing across block
+boundaries while resetting each block's BCC trellis. Its 450 independent streams
+check exact bits, CRC/tail failures and encoded trailing padding. A complete
+damaged block can be skipped without losing subsequent blocks; incomplete blocks
+do not advance the cursor. This reader itself does not recover DATA.
+
+The private SIG-B modulation kernel now connects equalized data tones to that
+reader. It handles all ten valid MCS/DCM combinations, removes the PAPR phase
+rotation (including the BPSK/DCM exception), combines 26-tone DCM halves and
+deinterleaves BCC metrics. Independent coverage comprises 270 modulated streams
+and 1294 exhaustive input-position/constant-symbol cases, including noisy weighted
+observations and either erased DCM half. These tests are not live HE MU qualification.
+
+The private SIG-B IQ kernel connects synchronization, FFT, carrier/pilot phase
+correction, edge-tone channel training and those readers. Its 172 independent IQ
+fixtures cover all valid MCS/DCM combinations, common and compressed signaling,
+empty allocations, RU-relative user contexts, count validation, and fields longer
+than 16 symbols (bounded to 36 for HE20). Failed user blocks preserve later users;
+a failed common field cannot establish allocation context. Sampling-clock drift
+tracking and live HE qualification remain pending. No MAC frames are published
+by this signaling kernel alone.
+
+`WifiDecoder` now retains MU candidates through SIG-B with progressive buffer
+reservations and gap/EOF handling. `PhyDiagnostic::HeMuSigB` carries
+`HeMuSigBFields`: common allocation, ordered user results, symbol count and end
+position. `HeSigBCodedError` preserves per-block failures. The `radio_receive`
+example emits `he_sig_b` records with the same information and an explicit
+header-only integrity disclaimer. Supported one-stream-per-RU layouts proceed
+through DATA; wholly unsupported layouts still report `UnsupportedPhy`.
+Legacy-only mode is unchanged; successful signaling alone never emits a MAC frame.
+
+The MU timing kernel uses the resolved SIG-B duration and signaled LTF count
+to locate training, DATA symbols, midambles and packet extension. Its 26529
+independent forward timelines cover all four MU guard/training pairs and STBC
+parity without inheriting SU-only restrictions. This is timing arithmetic,
+not per-RU spatial admission, channel training or MU payload recovery.
+
+The shared HE tone geometry covers all sixteen 20 MHz resource units (nine
+26-tone, four 52-tone, two 106-tone and one 242-tone), their pilot positions
+and signs, and one-stream BCC/LDPC permutations. Its RU indices are one-based
+within each size, not SIG-B slot indices. Geometry alone does not recover MAC
+bytes; the single-stream IQ-to-PSDU integration is described below.
+
+The private SIG-B-to-RU handoff translates allocation slots into physical tone
+geometry and preserves the original contiguous User field positions, including
+failed headers and empty allocations. Compressed HE20 signaling maps to one
+full-band 242-tone RU. Inconsistent user counts, missing/unexpected Common
+fields, wider bandwidths and invalid slot/size combinations are rejected. This
+structural mapping does not establish spatial decodability or payload integrity.
+
+An isolated one-stream MU RU training kernel estimates channels for all sixteen
+HE20 allocations and all four MU guard/training pairs. Independent quantized
+LTF fields cover flat and selective channels. The regularized delay fit accepts
+small RUs with fewer observations than delay coefficients; this is an estimate,
+not unique recovery of arbitrary physical taps. Multi-stream training and
+full spatial admission remain unfinished.
+
+MU per-user capacity calculations use the User field's MCS, coding and stream
+count together with RU size and global padding/STBC signaling. They preserve
+the 26-tone DCM short-segment size of two tones, the 106/242-only BCC filler,
+and per-user application of LDPC extra segments. Independent forward padding
+cases check byte/bit budgets, not spatial consistency, codeword admission or
+complete MU payload recovery.
+
+The per-user MU BCC kernel recovers PSDU bytes from already deinterleaved,
+stream-recombined soft metrics, using each user's RU capacity. Independent
+coded-bit cases cover all four RU sizes, padding/filler, STBC groups and
+SERVICE validation. Those bytes require the streaming path's MAC/FCS validation.
+
+MU LDPC layout calculation handles the common extra-segment flag differently
+from SU: a user accepts an extra segment requested by a peer, but rejects a
+missing segment it needs itself. Independent forward layouts check codeword
+sizes, shortening, puncturing and repetition. Cross-user consistency of the
+global flag remains separate work from per-user IQ recovery.
+
+The MU LDPC payload kernel removes post-FEC padding from ordered full-symbol
+metrics, recovers codewords and validates SERVICE before returning PSDU bytes.
+Independent encoded cases cover four RU sizes, MCS0..11, applicable DCM, STBC,
+and peer-requested extra segments. Strict mode rejects failed codewords;
+partial mode retains failure diagnostics and intact earlier bytes but still
+requires SERVICE and per-MPDU FCS verification. Full cross-user spatial
+admission remains unfinished.
+
+The joint DCM demapper also accepts 12- and 24-data-tone halves for 26/52-tone
+RUs. Independent distance fixtures verify the even-half BPSK sign, QPSK
+conjugation, 16-QAM bit swapping and erased-observation handling. This removes
+a small-RU demapper restriction; it does not itself recover packets.
+
+A private one-stream RU DATA demodulator converts a useful 256-sample symbol
+into full-symbol BCC-deinterleaved or LDPC-tone-ordered metrics. It corrects CFO,
+tracks per-RU pilot phase/slope, equalizes the supplied channel and combines
+DCM pairs. Independent floating-point waveforms cover all 16 HE20 RU positions,
+constellations through 1024-QAM (LDPC), selective channels and one erased DCM
+half. The caller must still admit the stream, estimate its channel, supply
+the PPDU pilot polarity and remove post-FEC padding during payload recovery.
+This symbol kernel alone does not establish packet integrity.
+
+The private MU IQ-to-PSDU path now connects checked SIG-B, MU timing, RU
+training, pilot polarity, DATA demodulation and BCC/LDPC recovery for one
+DATA stream per RU, optionally with STBC. It preserves original user positions and per-user
+failures, bounds samples/PSDU allocation, and refreshes channels at midambles.
+For extra LTFs in non-STBC multi-RU packets it estimates each channel from
+the first LTF; it does not average all training symbols. A 252-waveform cs8
+corpus covers all 16 HE20 RU positions, applicable DCM, constellations through
+1024-QAM with LDPC, all four guard/training pairs, extra LTF counts, midambles,
+CFO/selective channels, bad SERVICE and failed user CRC blocks. These synthetic
+PSDUs are not MAC frames. MU-MIMO spatial separation and live HE validation
+remain unfinished; this is not a full MU support claim.
+
+A separate 336-waveform mixed-user MAC corpus combines independent BCC/LDPC
+MCS and applicable DCM, or STBC, across allocation codes 0/15/128. It checks
+all four common initial padding boundaries with and without LDPC extra
+segments: LDPC payloads retain the initial boundary, while BCC payloads fill
+the final boundary (27.3.12.5.4). User indices and FCS-qualified frame bytes
+are checked at two chunk sizes. Small-RU STBC channel fitting uses pilot-sum
+constraints together with the separated DATA training observations. Failed
+LDPC reception without midambles can make one conservative decision-directed
+channel-refinement retry; SERVICE and MPDU FCS remain mandatory. These are
+synthetic tests, not dongle or over-the-air HE qualification.
+
+`WifiDecoder` now retains admitted MU DATA within the shared sample budget and
+publishes per-user HE A-MPDU members only after FCS validation. A separate
+94-waveform MAC corpus verifies exact frame bytes, bad-FCS/SERVICE/user-block
+salvage, partial LDPC recovery, chunking, output limits, EOF and gaps.
+`HeMuUser` identifies each frame's original user index within its accompanying
+`HeMuSigB`; artifacts include `he.user_index` and the selected `he.user` record.
+Combined output retains its documented completion/start/rate ordering, not
+RU order. Duplicate suppression distinguishes users even when their bytes,
+aggregate offsets and PPDU intervals are identical. This remains offline
+qualification, not proof of live HE interoperability or real-time throughput.
+
+MU STBC reception supports BCC MCS0–9 and LDPC MCS0–11 on all HE20 RU
+positions, including the MU-specific 4x-LTF/800ns combination. A single RU
+requires two LTFs; multiple RUs may signal 2/4/6/8. STBC is forbidden with
+DCM or any MU-MIMO RU. Both DATA symbols in the final pair honor post-FEC
+padding, and midambles refresh both channel estimates and common-clock tracking.
+The 380 complete-MAC fixtures cover branch loss, distinct per-RU spatial
+mapping, compressed one-user signaling, SERVICE/user-CRC/FCS rejection,
+partial LDPC salvage, and invalid single-RU LTF counts.
+
+Training phase and DATA phase/clock slope use pooled pilots, correlating each
+pilot against its own channel rather than assuming identical RU channels.
+This avoids fitting an independent slope to two noisy pilot observations in
+each small RU. R-matrix observations directly estimate summed pilot channels.
+Small-RU STBC delay-model complexity is chosen from held-out LTF measurements,
+with the full guard-length model retained; 192 separate long-delay fields
+check that this does not silently exclude channels near the guard boundary.
+The DATA path caches at most 400 phase-corrected FFT symbols (819200 bytes of
+additional bounded working storage), using fallible allocation. This does not
+increase the time-domain sample-retention limit. These remain offline receive
+results, not live HE, sustained real-time, or modern-transmit qualification.
+
+Compressed HE20 signaling with one user is independently qualified through
+MAC recovery by 242 additional waveforms. Per 27.3.11.8.4, this case uses a
+non-MU-MIMO User field on the full 242-tone RU, with no Common field. Tests
+cover all 10 SIG-B MCS/DCM choices across DATA modes and all four guard/training
+pairs, inferred SIG-B duration, CFO/selective channels, bad FCS and failed user
+CRC. The zero raw user-count code must not be interpreted as one SIG-B symbol.
+This does not qualify compressed multi-user spatial separation.
+
+The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
+280-packet ER242 corpus covers all applicable guard/training pairs, padding,
+midambles10/20, CFO/selective channels, and a damaged first aggregate member;
+16 invalid cases cover SERVICE, truncation and erased STBC training. These
+independent offline waveforms establish neither live HE dongle comparison nor
+real-time throughput or ER transmission.
+
+The TB SIG-A bit/metric primitive (`HeTbSignalFields`) checks the shared HE
+CRC and tail, TB Format, reserved bit 23 and 20/40 MHz spatial-reuse copies.
+It preserves all nine SIG-A2 bits supplied by the Trigger instead of assuming
+a constant. Independent fixtures cover 2048 valid headers and 57 rejections.
+`WifiDecoder` additionally recognizes HE20 TB IQ prefixes and emits
+`PhyDiagnostic::HeTbSignal`; artifacts use `he.format: tb` without invented
+DATA settings. Independent qualification covers 256 prefixes with attenuation,
+CFO and multipath, 14 invalid prefixes, chunk boundaries and capture gaps.
+`Dot11Trigger` now exposes the preceding MAC Trigger body's Common Info and
+normal User Info fields through the ordinary `Packet` stack. Basic, BFRP,
+MU-BAR (compressed and Multi-TID), MU-RTS, BSRP, GCR MU-BAR and BQRP boundaries
+are parsed; NFRP and unknown variant/BAR layouts remain lossless opaque bytes.
+Reserved values and padding are preserved, not treated as scheduling approval.
+Bare Trigger input excludes FCS. Radiotap's explicit FCS-present flag separates
+the trailer into `Raw`; the IQ packet source already strips verified FCS before
+MAC parsing. This MAC layer alone does not associate a Trigger with a TB reply.
+
+The internal TB timing primitive consumes explicit Trigger Common Info and
+the checked repeated L-SIG length. Independent forward timelines cover the
+three Trigger GI/LTF settings, LTF counts, Doppler/midambles, STBC pairs and
+packet extension, including TB's 8us STF and its distinct length rule. This
+does not establish Trigger association, per-user DATA admission or live support.
+
+Trigger per-user geometry resolves all 16 HE20 RUs from the normal User Info
+RU byte and computes BCC/LDPC payload budgets from explicit MCS, spatial-stream,
+DCM and padding fields. Random-access fields force one space-time stream;
+their RU-count bits are not mistaken for a stream count. Shared independent
+forward per-RU budget vectors check this mapping. A private bounded schedule
+expands contiguous same-size random-access ranges and retains the originating
+User Info index. It marks overlapping, unallocated and unsupported spatial
+entries ineligible without dropping a separate disjoint RU. Independent tables
+cover 2304 range and overlap cases. This does not separate spatial users or
+associate a Trigger with a received TB transmission.
+
+The TB LDPC layout primitive follows the Trigger's explicit extra-segment flag
+under 27.3.12.5.5, including its initial-padding reversal. Independent vectors
+pin shortening, puncturing and repetition for both flag values; existing SU/MU
+admission rules are unchanged. Layout acceptance is not codeword convergence
+and never establishes SERVICE or MAC FCS integrity.
+
+The TB BCC/LDPC payload kernels consume already-demapped per-user soft metrics
+and explicit Trigger fields. Independent fixtures cover exact PSDU bytes,
+SERVICE rejection, padding, finite-input limits and partial LDPC failure
+accounting. These kernels do not demodulate TB IQ or publish frames: Trigger
+association, training, per-user clock tracking and MPDU FCS checks remain required.
+
+Trigger-configured isolated-RU training now estimates one DATA stream or its
+two STBC channels using the 2x-LTF/1600ns and 4x-LTF/3200ns modes. Independent
+RU training waveforms check channel recovery, including either missing STBC
+branch and long-delay channels. TB training uses only the selected user's pilot
+phase, never the MU estimator's phase pooled across RUs. Extra training symbols
+are accepted for OFDMA; a full 242-tone allocation requires the count for its
+admitted streams. Table 27-31 restricts 1x-LTF/1600ns to full-bandwidth UL MU-MIMO,
+so this isolated-user path rejects it and masked training. These kernels still
+require caller-established acquisition and positions; they do not establish
+simultaneous-user clock acquisition or end-to-end TB frame recovery.
+
+The private isolated-user TB IQ kernel now connects checked TB signaling and
+explicit Trigger fields to timing, RU training, pilot tracking and BCC/LDPC
+PSDU recovery. It uses TB's longer STF and DATA pilot offset, refreshing
+training at midambles. Its 282 independent waveforms cover all 16 RU positions,
+applicable one-stream DCM/STBC modes, both OFDMA guard/training combinations,
+channel impairments and SERVICE rejection. This is not yet streaming TB frame
+publication: exchange association and aggregate
+MPDU integrity remain separate integration requirements.
+
+Full242-tone non-STBC TB training selects its finite-delay model using held-out
+LTF observations, then refits all observed tones. The candidate set retains the
+full guard interval rather than assuming every propagation channel is short.
+This reduces noise fitting in weak training without using known payload bytes
+or requiring a flat channel. Deterministic checks retain long-delay paths and
+compare estimates against independently generated physical channels. It does
+not guarantee high-order QAM recovery at arbitrary CS8 signal levels.
+
+For full242-tone, non-STBC high-order LDPC TB DATA without midambles, a failed
+initial decode can retry a linear carrier-phase and sampling-clock trend fitted
+to that user's received DATA pilots. The retry is bounded to 400 symbols and
+must fully converge and validate SERVICE before replacing the initial estimate.
+It uses neither a known carrier offset nor known payload bytes. Nonlinear phase
+variation is not assumed away: an unsuccessful retry retains the initial result,
+and downstream MPDU FCS checks remain mandatory.
+
+The TB kernel also exposes private header-only admission: checked L-SIG,
+RL-SIG and HE-SIG-A plus explicit Trigger fields determine the per-user DATA
+geometry and retained-sample budget before DATA buffering. Admission checks
+payload/sample limits and absolute packet-end overflow; it does not establish
+Trigger association, training quality, SERVICE validity or MPDU FCS integrity.
+
+An additional 276 independently generated captures sum simultaneous users
+before CS8 quantization and check all 1380 distinct recovered payloads. They
+cover disjoint 26-, 52- and 106-tone allocations, per-user carrier offsets,
+gain and phase differences, STBC and midambles. A two-pilot noise-confidence
+check prevents a weak pilot from corrupting the slope estimate, while retaining
+weak but noise-free slope evidence. These cases use a common MCS/coding and RU
+size within each capture; mixed scheduling, relative timing and sampling-clock
+offsets still need qualification. This is offline kernel evidence, not live
+or streaming TB frame qualification.
+
+Without Trigger context, the receiver reports `UnsupportedPhy` and does not
+publish a TB frame. This is not payload decoding: RU assignment, MCS,
+coding and training context must come from the triggering exchange
+(27.3.2.6, Table 27-21), not be guessed from this header.
 
 ## Evidence requirements
 
@@ -39,6 +429,28 @@ or overflowing captures remain diagnostic evidence, not passing qualification.
 Raw captures and device-specific live evidence remain in operator-owned
 artifacts rather than the repository.
 
+## EHT signaling primitives
+
+`EhtUsigFields::decode` validates the 52 post-BCC U-SIG bits shared by EHT MU
+and EHT TB PPDUs. It checks the PHY version, CRC, tail and Validate states and
+returns the common bandwidth, direction, BSS color and TXOP fields together
+with the format-specific EHT-SIG or spatial-reuse fields. The companion IQ
+prefix kernel checks the 6 Mb/s modulo-zero L-SIG and repeated RL-SIG, then
+equalizes and decodes both U-SIG symbols. The combined streaming receiver emits
+an `EhtUsig` diagnostic for a validated prefix and does not reinterpret it as
+legacy DATA. For supported non-OFDMA single-user and downlink MU-MIMO prefixes
+it continues through EHT-SIG; it does not yet recover EHT DATA.
+
+`EhtNonOfdmaSignal::decode` interprets complete non-OFDMA EHT-SIG content
+channels. It validates the common-plus-first-user block and every remaining
+one- or two-user block independently, returning typed single-user fields or two
+through eight MU-MIMO user records. Its IQ receiver covers both forms with all
+four EHT-SIG modulation choices (MCS0, MCS1, MCS3 and MCS15/DCM), resets BCC for
+each encoding block, checks the U-SIG symbol count and recovers the complete
+content channel from a 20 MHz prefix. The streaming receiver emits `EhtSignal`
+only after every block's CRC and tail validation. OFDMA EHT-SIG, training and
+EHT DATA remain pending.
+
 ## HT-SIG primitive
 
 `HtSignalFields::decode` validates exactly 48 post-BCC binary bits in
@@ -58,7 +470,7 @@ all four BCC rates, including 5/6. Only FCS-valid MAC frames are published;
 HT aggregate recovery is described below. The existing `LegacyWifiDecoder`
 remains legacy-only.
 
-The independent oracle `ht_bcc_vectors.py` supplies 64 full-waveform fixtures:
+The independent oracle `python3 -m tools.oracle.engine.backends.wifi.ht.bcc` supplies 64 full-waveform fixtures:
 eight MCS values, both guard intervals, 100/4095-byte PSDUs, and clean or
 carrier-offset/multipath conditions. The kernel test supplies timing/CFO to
 isolate DATA correctness; the separate streaming test must acquire both from
@@ -77,7 +489,7 @@ or nonconvergence. Strict codeword recovery requires a zero syndrome, which
 does not replace MAC FCS. Aggregate recovery can retain tentative estimates
 from failed codewords under the separate policy below.
 
-`ldpc_vectors.py --check` independently solves systematic parity using GF(2)
+`python3 -m tools.oracle.engine.backends.wifi.ldpc.codeword --check` independently solves systematic parity using GF(2)
 Gaussian elimination. The Rust tests verify 36 complete codewords, correction
 of eight low-confidence sign errors per word, finite extreme input scales,
 dimension checks, unusable metrics and the iteration bound. This primitive is
@@ -85,7 +497,7 @@ connected to HT IQ through `WifiDecoder`. The internal rate-matching layer has i
 coverage of 208 geometry cases and 48 shortened/punctured/repeated streams,
 including both symbol-group sizes and exact information-bit recovery.
 
-`ht_ldpc_vectors.py --check` supplies 64 complete HT20 LDPC waveforms with the
+`python3 -m tools.oracle.engine.backends.wifi.ht.ldpc --check` supplies 64 complete HT20 LDPC waveforms with the
 same MCS/GI/length/impairment matrix as BCC. Streaming recovery checks exact
 PSDU bytes, FCS, sample boundaries and coding metadata. Independent malformed
 controls target nonconvergence, invalid SERVICE and bad MAC FCS. No BCC
@@ -140,7 +552,7 @@ the first parity failure also retains `LdpcNonconvergence` details. These
 diagnostics accompany recovered frames and require downstream match arms.
 Nonaggregated LDPC reception remains strict: any codeword failure rejects it.
 
-`ht_ampdu_vectors.py --check` generates 128 complete independent IQ fixtures
+`python3 -m tools.oracle.engine.backends.wifi.ht.ampdu --check` generates 128 complete independent IQ fixtures
 covering both coding families, MCS 0–7, both guard intervals, alignment,
 duplicate MPDUs and bad FCS, plus MCS 7 delimiter corruption, truncation,
 padding and aggregates larger than 4095 bytes. Four damaged-codeword fixtures
@@ -184,7 +596,7 @@ the NSS1/NSTS2 mapping in IEEE 802.11-2020 Table 19-18. They use bounded,
 allocation-free arithmetic, reject nonfinite inputs and unobservable channels,
 and retain finite behavior at extreme input scales through wider intermediates.
 
-`stbc_vectors.py --check` independently generates 2400 constellation/training
+`python3 -m tools.oracle.engine.backends.wifi.ofdm.stbc --check` independently generates 2400 constellation/training
 pairs across BPSK, QPSK, 16-QAM and 64-QAM and six channel pairs. Tests compare
 both supplied-channel and training-derived recovery against the independent
 expected symbols.
@@ -256,6 +668,217 @@ interval metadata, exact HackRF sample supply, zero firmware shortfalls, and
 zero kernel capture drops. Optional radiotap coding and format fields were
 compared only when the reference driver marked them known; absent reference FCS
 remains recorded as such.
+
+## VHT-SIG-A parser increment
+
+The independent `python3 -m tools.oracle.engine.backends.wifi.vht.signal.a --check` corpus contains 1880 header
+vectors: 640 SU and 1240 MU cases covering all group IDs and bandwidth codes.
+It includes encoded/interleaved bits, per-user MU stream/coding fields and SU
+stream, partial-AID and MCS fields. Inventory tests check exact corpus integrity,
+dimensions, reserved coding for absent MU users and distinct headers.
+
+`VhtSignalAFields` decodes binary header bits or 96 interleaved soft metrics.
+Tests check every fixture, every single-bit corruption, reserved fields,
+nonbinary/nonfinite inputs and metric scaling. SU/MU fields are typed separately;
+absent MU users retain `None` for coding rather than an inferred coding mode.
+
+The header parser alone does not establish VHT IQ acquisition, DATA recovery,
+live qualification or TX. The streaming integration below admits a subset. In particular,
+bandwidth code 3 does not distinguish 160 MHz from 80+80 MHz, and the ability
+to interpret a header must not be confused with admitting its DATA waveform.
+
+## VHT BCC IQ kernel increment
+
+The private VHT20 SISO BCC IQ kernel connects legacy-preamble acquisition,
+L-SIG, VHT-SIG-A, VHT-LTF training, VHT-SIG-B and DATA recovery. Its 108
+complete independent waveforms cover MCS 0-8, both guard intervals, short-GI
+disambiguation, S-MPDU/EOF/PHY padding, and frequency-offset/multipath cases.
+The kernel tests obtain timing and frequency from IQ, not fixture hints, and
+compare complete PSDU bytes and sample boundaries. Eight additional waveforms
+exercise invalid/unsupported signaling, alongside truncated and unusable inputs.
+`WifiDecoder` now connects this kernel to bounded streaming reception and the
+VHT-aware aggregate scanner. SIG-A admission reserves DATA samples within the
+existing shared candidate buffer budget. Each returned frame has its own FCS,
+delimiter offset, and typed SIG-A/SERVICE-verified SIG-B metadata. EOF padding
+does not become frame bytes. `radio_receive --modern` labels these frames as
+`vht` and adds VHT-only metadata without changing legacy/HT record fields.
+
+The 54 additional complete aggregate waveforms exercise duplicate occurrences,
+bad-FCS recovery and 4100-byte MPDUs across MCS0-8 and both GIs. Streaming tests
+use one-sample, 79-sample and 4096-sample chunks, with separate gap, buffer and
+output-limit checks. Saved-artifact admission permits the same 16383-byte
+frame ceiling as the modern example, while retaining explicit allocation bounds.
+
+The example comparator now accepts VHT20 SU NSS1 BCC/LDPC radiotap observations.
+It requires known bandwidth/GI and an observed MCS/NSS, interprets other fields
+only under their validity bits, and compares known configuration conflicts.
+Unknown STBC or SU/MU group information remains an explicit qualification gap.
+HT and VHT do not cross-match at equal rates; aggregate frames retain their full
+PPDU interval and one-to-one occurrence matching. Header diagnostics never enter
+the valid-frame denominator. The 9253 independent metadata vectors and an
+IQ-to-synthetic-reference-pcap workflow cover duplicate and large frames; this
+is not a substitute for paired hardware qualification. MU, HE/EHT,
+hardware qualification, real-time performance and modern TX remain unfinished.
+
+## VHT BCC DATA recovery increment
+
+The internal LDPC rate matcher also has a VHT20 SU geometry entrypoint. Unlike
+HT, it includes PHY padding in the encoded information length, derives the
+initial symbol count from duration and the extra-symbol flag, and checks that
+the resulting puncturing decision agrees with that signaling. Independent
+forward fixtures cover 20412 geometries and 54 encoded bitstreams.
+
+VHT LDPC now connects that rate matcher to the same bounded streaming path.
+It reverses the VHT20 whole-constellation tone permutation, verifies the SERVICE
+CRC against SIG-B, and scans the recovered PSDU with per-MPDU FCS validation.
+Partial LDPC estimates carry explicit coding diagnostics; they never bypass FCS.
+Seventy-three independent waveforms cover both GIs, MCS0-8, extra-symbol groups,
+duplicates, large MPDUs, corrupt FCS, a damaged LDPC codeword and CFO/multipath. This is offline receive
+validation, not VHT STBC/MU or hardware qualification.
+
+## VHT one-DATA-stream STBC receiver increment
+
+The VHT receiver also handles two space-time streams carrying one DATA stream.
+It separates two LTF DATA columns while retaining the combined channel for
+SIG-B and the common VHT pilots. DATA uses the existing two-symbol STBC solver,
+not HT's different two-stream pilot patterns. Both BCC and LDPC preserve even
+symbol grouping and independent MPDU FCS checks. The 110 complete independent
+two-transmitter/one-receiver simulations cover all nine MCS values, both GIs,
+large and duplicate frames, CFO/multipath and damaged-codeword recovery.
+Nine negative waveforms test malformed signaling and incomplete or corrupt
+fields. Reference metadata distinguishes NSS1 from NSTS2 when STBC is known;
+unknown STBC remains a qualification gap. Live reception and STBC transmission
+are not established by these offline simulations.
+
+## HE SU signaling kernel increment
+
+A private HE SU header kernel validates the 52 decoded bits or 104 interleaved
+soft metrics, CRC, tail and reserved fields. It interprets Doppler-dependent
+stream counts and the DCM/STBC guard-interval escape combination separately
+from applied DATA modes. The 1984 independent header vectors are anchored by
+the published HE CRC example. Those header-only tests do not establish
+HE reception or valid DATA admission; IQ integration is described below.
+ER SU, MU and TB require their own format context and additional decoding.
+ER SU has independently tested private DATA/midamble/packet-extension timing
+for both tone allocations, including its repeated SIG-A duration. ER242 payload
+recovery is connected as described above; upper106 still stops after signaling.
+Timing fixtures alone do not qualify IQ-to-byte recovery.
+
+The private HE20 SU IQ prefix kernel now verifies L-SIG/RL-SIG agreement,
+6Mb/s signaling and the SU/TB length remainder before interpreting SU SIG-A.
+It trains the four additional signaling edge tones from L-SIG/RL-SIG and
+handles HE's L-LTF power normalization. The 96 valid and 10 invalid independent
+CS8 prefixes exercise actual legacy acquisition, CFO/multipath and malformed
+signaling. Those fixtures end at HE-SIG-A and do not establish DATA recovery
+or hardware qualification. Public streaming publication remains unfinished.
+
+Private 128- and 256-point receive transforms provide the longer HE-LTF and
+DATA transform periods at 20 Msps, keeping the legacy 64-point path unchanged.
+An independent direct DFT checks every output bin for ten input patterns, and
+analytical tests check every tone at both sizes. These arithmetic tests do not
+establish HE DATA decoding or real-time throughput.
+
+The private one-stream 4x HE-LTF receiver uses the recovered SU header to locate
+training, handles 0.8us and 3.2us guards, and estimates all242 active tones with
+the 256-point transform. Independent preamble/channel-probe cases check gain,
+frequency offset, multipath and changes in spatial mapping after the legacy
+header. The 1x/2x paths use short 64/128-point transforms and convert their gain
+to the 256-point DATA normalization. Finite-delay least-squares estimation fills
+untrained tones and denoises measured tones within a guard-bounded delay model. This is an
+estimator, not exact reconstruction for arbitrary channels. Independent probes
+cover all three sparse SU training/guard combinations. STBC training
+remains unfinished; probe sign recovery alone is not frame
+decoding and does not qualify high-order modulation error performance.
+
+HE20 SU now also has a private timing kernel deriving DATA-symbol and midamble
+positions from checked signaling. Independent forward timelines cover the
+five SU training/guard combinations, 10/20-symbol midamble periods and 0-16us
+packet extension. Exact DATA/PE boundaries remain distinct from L-SIG's rounded
+duration; offsets exclude the optional signal extension. This is not DATA
+admission, multi-stream demodulation or sounding
+NDP support. Public frame publication remains unfinished.
+
+The private HE20 SU capacity kernel derives MCS dimensions, meaningful coded
+positions and PSDU length from symbol count and padding signaling. It enforces
+the BCC/MCS, DCM and STBC constraints and reverses the LDPC extra-segment
+adjustment before calculating payload bytes. Independent forward padding cases
+cover all MCSs and valid stream-count arithmetic. This does not implement MIMO
+reception, FEC recovery, the LDPC puncturing decision or complete DATA admission.
+
+The private HE BCC kernel recovers PSDU bytes from deinterleaved, recombined
+symbol metrics. It removes post-FEC padding and DCM BPSK filler, depunctures all
+four BCC rates, applies terminated Viterbi decoding, then descrambles and checks
+the zero SERVICE field. A caller-supplied byte limit bounds payload allocation.
+Independent coded-bit cases cover MCS0-9 and all nonzero scrambler seeds.
+This primitive requires MAC aggregate and FCS validation; the public receive
+path now supplies both for qualified one-stream HE SU layouts.
+
+The private HE20 SU IQ kernel now connects acquisition, training, timing,
+capacity, pilot tracking, QAM demapping, BCC deinterleaving or LDPC tone-order
+restoration and byte recovery, including one-stream DCM or STBC. Independent full-waveform
+cases recover exact synthetic PSDUs across all five SU guard/training pairs,
+frequency offset and multipath. LDPC removes post-FEC padding before rate
+recovery, verifies SERVICE and scans aggregates before frame publication.
+Sparse training uses regularized finite-delay least-squares estimation; it is an estimator,
+not a guarantee for every propagation channel. Other HE layouts remain unfinished. These offline
+tests do not establish live hardware qualification or real-time throughput.
+
+Midambles reuse the same single-stream LTF estimator as initial training.
+Their position follows DATA-symbol timing, including the exception for a sole
+last DATA symbol. The estimator refreshes amplitude and phase response and
+restarts its residual slope estimate without restarting DATA pilots, the
+scrambler or FEC. Tests use piecewise FIR channel changes, both periods, all
+five GI/LTF pairs, BCC MCS0–9 and LDPC MCS0–11, and long pilot-sequence wraps.
+This does not guarantee tracking of arbitrary channel variation between midambles.
+
+## VHT BCC DATA implementation
+
+The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in
+SERVICE, a nonzero scrambler seed, zero-tail termination after PHY padding,
+and the whole-octet PSDU length derived from symbol capacity. Legacy/HT
+retain their zero-SERVICE check and tail-before-padding layout. Independent
+coded-bit fixtures include all four BCC rates, every nonzero seed, invalid
+SERVICE/seed cases, and long payloads up to 58,965 bytes. These are DATA
+primitives, not complete IQ or MAC-aggregate qualification.
+
+## VHT 256-QAM demapper increment
+
+The shared data demapper now also handles 256-QAM labels and normalization.
+Its independent diagram-derived cases cover all 256 ideal points and 145
+off-grid inputs, checking soft metrics, channel weighting and erasures.
+Invalid modulation dimensions are rejected instead of falling through to
+64-QAM. This does not admit VHT frames through the streaming receiver; pilot,
+coding, aggregation and waveform integration remain separate requirements.
+
+## VHT receive timing increment
+
+The private VHT20 timing primitive derives training-field count, DATA start,
+DATA symbol count and sample end from validated L-SIG/SIG-A fields. It keeps
+the rounded signaled duration separate from the actual DATA end, handles
+short-GI symbol-count disambiguation, and rejects inconsistent STBC grouping.
+Zero-symbol sounding timing is retained without claiming a DATA payload.
+
+The independent forward-time generator supplies 1,105 cases using exact
+rational durations. Receiver tests additionally enumerate every 12-bit L-SIG
+length with both guard intervals and disambiguation values, and check invalid
+stream counts and input bounds. This is timing groundwork, not integrated
+VHT waveform acquisition or DATA decoding.
+
+## VHT20 SIG-B and SERVICE increment
+
+`VhtSignalB20Fields` interprets 26 decoded bits or 52 equalized soft metrics,
+using the SU/MU context from SIG-A. It preserves encoded length units and
+exposes their inclusive byte-length bounds, not an invented exact length.
+The NDP pattern is recognized only in SU context; the same MU bits retain
+their length/MCS meaning.
+
+Parsing SIG-B does not verify its CRC. `verify_service` checks the 16
+already-descrambled DATA SERVICE bits against the header-derived CRC and
+zero prefix. NDP has no DATA/SERVICE and cannot pass that verification.
+The independent 225-case corpus covers lengths, all MU MCS field values,
+NDP context, BCC/interleaving and SERVICE linkage; tests also reject single-bit
+header/SERVICE corruption and malformed inputs. This remains a primitive for
+VHT integration, not complete VHT IQ acquisition, frame recovery or TX.
 
 ## Existing example and replay workflow
 

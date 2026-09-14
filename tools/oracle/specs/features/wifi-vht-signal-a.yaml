@@ -1,0 +1,24 @@
+version: 1
+kind: feature
+name: wifi_vht_signal_a
+summary: Integrity-checked VHT-SIG-A fields before DATA admission.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: header-fields
+    source: IEEE 802.11-2020 21.3.8.3.3 Table 21-12
+    checks: [bandwidth_code, su_mu_group_distinction, su_nsts_partial_aid_mcs, mu_per_user_nsts_coding, guard_interval, short_gi_disambiguation, ldpc_extra_symbol, txop_power_save, beamformed]
+  - name: integrity
+    checks: [exact_bit_and_metric_counts, binary_bits, finite_metrics, crc, tail, reserved_bits, independent_bcc_interleaving]
+coverage_cases: [wifi-vht-sig-a]
+supported_cases:
+  - {name: wifi-vht-sig-a, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - The bit and interleaved-soft-metric parser passes 1880 independent vectors, every single-bit corruption, and malformed-input and reserved-field checks.
+      - Absent MU users retain no coding observation; unsupported SU MCS and DATA modes are not silently admitted.
+      - Header interpretation is not DATA admission, IQ acquisition, live qualification, or modern TX.

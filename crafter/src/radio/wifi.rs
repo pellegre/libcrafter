@@ -1,16 +1,26 @@
-//! Combined receive-only legacy PHY dispatch.
+//! Combined receive-only legacy and opt-in modern PHY dispatch.
 use super::*;
 
-/// Combined legacy and HT20 one-stream BCC/LDPC receiver.
+/// Combined legacy, HT20/VHT20 BCC/LDPC and HE20 receiver.
 ///
 /// HT MCS 0–7, BCC and LDPC, valid long/short guard intervals, mixed and
 /// greenfield formats, nonaggregated PSDUs, A-MPDUs, one-data-stream STBC and
 /// extension training are supported. `max_frame_bytes` bounds each MPDU;
 /// `max_pending_frames` must accommodate the returned MPDUs plus two reserved
 /// child slots. Overflow is an explicit error, never a truncated aggregate.
-/// Additional data streams, HT40, VHT, HE and EHT are not decoded. This
-/// implements the same `PhyDecoder` packet-source interface and shares the
-/// bounds and output ordering of `LegacyWifiDecoder`.
+/// VHT supports SU MCS 0–8, both guard intervals, one-DATA-stream STBC,
+/// S-MPDU and A-MPDU framing.
+/// HE20 SU/ER supports BCC/LDPC, DCM, one-DATA-stream STBC and midambles
+/// for admitted layouts; detailed coverage is in `docs/modern-wifi-iq.md`.
+/// HE MU recovers FCS-checked aggregates for one DATA stream per RU, including STBC.
+/// HE TB uses recently decoded eligible Trigger fields for one DATA stream per
+/// disjoint RU, including STBC. Context matching is not BSS authentication.
+/// EHT MU/TB preambles are recognized through integrity-checked U-SIG, and
+/// 20 MHz EHT-SIG is decoded for supported downlink formats. EHT DATA is not
+/// yet decoded. Other HE layouts, VHT MU,
+/// additional independent DATA streams and wider channels are not yet decoded.
+/// This implements the same `PhyDecoder` packet-source interface
+/// and shares the bounds and output ordering of `LegacyWifiDecoder`.
 pub struct WifiDecoder {
     inner: LegacyWifiDecoder,
 }
@@ -183,7 +193,23 @@ pub(super) fn same_occurrence(a: &RecoveredFrame, b: &RecoveredFrame) -> bool {
         && a.start.sample_index == b.start.sample_index
         && a.end_sample_index == b.end_sample_index
         && aggregate_offset(a) == aggregate_offset(b)
+        && mu_user(a) == mu_user(b)
+        && tb_user(a) == tb_user(b)
         && a.bytes == b.bytes
+}
+fn tb_user(frame: &RecoveredFrame) -> Option<(usize, u8)> {
+    frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeTbUser {
+            user_index, user, ..
+        } => Some((*user_index, user.ru_allocation)),
+        _ => None,
+    })
+}
+fn mu_user(frame: &RecoveredFrame) -> Option<usize> {
+    frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeMuUser { user_index, .. } => Some(*user_index),
+        _ => None,
+    })
 }
 fn aggregate_offset(frame: &RecoveredFrame) -> Option<usize> {
     frame.diagnostics.iter().find_map(|d| match d {

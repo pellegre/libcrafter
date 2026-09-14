@@ -1,0 +1,22 @@
+version: 1
+kind: feature
+name: wifi_he_tb_signal_a
+summary: Checked HE TB SIG-A fields without inferred Trigger parameters.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: tb-header-fields
+    source: IEEE 802.11ax-2021 Table 27-21 and 27.3.11.7.3-4
+    checks: [independent_crc_bcc_interleaver, field_mapping, trigger_reserved_bits, subband_spatial_copies, crc_tail_format_reserved_rejection, crc_truncation_limits, finite_metric_bounds]
+coverage_cases: [wifi-he-tb-signal-a]
+supported_cases:
+  - {name: wifi-he-tb-signal-a, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Header bit/metric kernel only. Caller establishes the SU/TB PHY branch. No Trigger context, TB DATA recovery or live qualification is implied.
+      - Nine SIG-A2 reserved bits come from the Trigger and are preserved verbatim, not forced to a constant.
+      - Spatial-reuse code values are raw values, not permissions; required 20/40 MHz subband copies are checked.

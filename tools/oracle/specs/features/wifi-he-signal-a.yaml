@@ -1,0 +1,20 @@
+version: 1
+kind: feature
+name: wifi_he_signal_a
+summary: HE SU signaling integrity and field interpretation, not DATA admission.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: he-su-signal-a
+    source: IEEE 802.11ax-2021 27.3.11.7.2-4 Tables 27-18 and 27-19, 27.3.12.8 Table 27-35
+    checks: [exact_bit_count, binary_bits, crc4, zero_tail, reserved_bits, doppler_nsts, dcm_stbc_escape, independent_soft_metrics]
+coverage_cases: [wifi-he-su-signal-a]
+supported_cases:
+  - {name: wifi-he-su-signal-a, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Private SU header kernel only; caller must establish SU format. No HE IQ acquisition, DATA publication, ER SU, MU, TB or hardware qualification yet.

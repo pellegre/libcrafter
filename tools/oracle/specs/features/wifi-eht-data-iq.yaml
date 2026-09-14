@@ -1,0 +1,24 @@
+version: 1
+kind: feature
+name: wifi_eht_data_iq
+summary: EHT20 non-OFDMA one-stream DATA IQ to raw PSDU bytes.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: bcc-data-iq
+    source: IEEE 802.11 TGbe 11-21/0566r0, 11-21/1229r0 and 11-23/1598r1
+    checks: [mcs0_through_9, mcs15, constellation_demapping, bcc_interleaving, service, scrambler, padding, exact_sample_coordinates, impairments]
+  - name: ldpc-data-iq
+    source: IEEE 802.11 TGbe 11-20/1338r6, 11-21/0566r0 and 11-23/1598r1
+    checks: [mcs0_through_13, ldpc_layout, shortening, puncturing, repetition, constellation_demapping, service, scrambler, padding, exact_sample_coordinates, impairments]
+coverage_cases: [wifi-eht-data-iq]
+supported_cases:
+  - {name: wifi-eht-data-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - One-stream non-OFDMA BCC and LDPC recovery is implemented for complete 20 MHz captures. MCS 13 has bit-level coverage but is not claimed robust from eight-bit IQ.
+      - OFDMA DATA is tracked by the separate wifi_eht_ofdma_data_iq contract.

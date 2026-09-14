@@ -190,6 +190,141 @@ mod tests {
         }
     }
     #[test]
+    fn radio_he_packet_source_preserves_frames_and_metadata() {
+        for row in include_str!("../../tests/fixtures/iq/he-ampdu-iq-index.tsv")
+            .lines()
+            .skip(1)
+            .filter(|r| r.starts_with("he-ampdu-iq-mcs9-ltf4-gi3200-"))
+            .chain(
+                include_str!("../../tests/fixtures/iq/he-ldpc-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|r| r.starts_with("he-ldpc-iq-mcs11-ltf1-gi800-")),
+            )
+            .chain(
+                include_str!("../../tests/fixtures/iq/he-midamble-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|r| {
+                        r.starts_with("he-midamble-iq-mcs11-ldpc-ltf1-gi800-p10-n12\t")
+                            || r.starts_with("he-midamble-iq-mcs0-bcc-ltf1-gi800-p10-n12\t")
+                    }),
+            )
+            .chain(
+                include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|r| {
+                        r.starts_with("he-stbc-iq-mcs0-bcc-ltf1-gi800-pad3-changing\t")
+                            || r.starts_with("he-stbc-iq-mcs11-ldpc-ltf4-gi3200-pad4-changing\t")
+                    }),
+            )
+            .chain(
+                include_str!("../../tests/fixtures/iq/he-dcm-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|r| {
+                        r.starts_with("he-dcm-iq-mcs0-bcc-ltf1-gi800-pad3\t")
+                            || r.starts_with("he-dcm-iq-mcs4-ldpc-ltf4-gi3200-pad4\t")
+                    }),
+            )
+            .chain(
+                include_str!("../../tests/fixtures/iq/he-er-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .chain(
+                        include_str!("../../tests/fixtures/iq/he-er106-iq-index.tsv")
+                            .lines()
+                            .skip(1),
+                    )
+                    .filter(|r| {
+                        let name = r.split('\t').next().unwrap();
+                        name.contains("-mcs0-") && name.ends_with("-ltf4-gi3200-pad3")
+                    }),
+            )
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let er = c[0].starts_with("he-er");
+            let midamble = c[0].starts_with("he-midamble");
+            let dcm = if er {
+                c[11] == "1"
+            } else {
+                c[0].starts_with("he-dcm")
+            };
+            let stbc = if er {
+                c[12] == "1"
+            } else {
+                c[0].starts_with("he-stbc")
+            };
+            let ldpc = if midamble || dcm || stbc || er {
+                c[2] == "1"
+            } else {
+                c[0].starts_with("he-ldpc")
+            };
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let source = ReaderIqSource::new(Cursor::new(bytes), config(), position()).unwrap();
+            let source = RadioPacketSource::new(source, WifiDecoder::new(), config()).unwrap();
+            let records = Sniffer::new(source)
+                .with(Dot11Metadata::new())
+                .collect_records()
+                .unwrap();
+            let expected: Vec<Vec<u8>> = c[if dcm || stbc || er {
+                7
+            } else if midamble {
+                9
+            } else if ldpc {
+                5
+            } else {
+                6
+            }]
+            .split(',')
+            .map(|s| {
+                s.as_bytes()
+                    .chunks_exact(2)
+                    .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                    .collect()
+            })
+            .collect();
+            assert_eq!(records.len(), expected.len());
+            for (record, bytes) in records.iter().zip(expected) {
+                assert_eq!(record.metadata().captured_bytes().unwrap(), bytes);
+                assert_eq!(
+                    record.packet().compile().unwrap().as_bytes(),
+                    &bytes[..bytes.len() - 4]
+                );
+                assert!(record.packet().layer::<Dot11>().is_some());
+                let rf = record.metadata().radio().unwrap();
+                assert_eq!(rf.stripped_fcs_bytes, 4);
+                assert_eq!(rf.start.sample_index, 37);
+                assert_eq!(rf.start.time_anchor, position().time_anchor);
+                assert!(rf.diagnostics.iter().any(|d| {
+                    let fields = match d {
+                        PhyDiagnostic::HeSignal { fields, .. } if !er => fields,
+                        PhyDiagnostic::HeErSignal { fields, .. } if er => fields,
+                        _ => return false,
+                    };
+                    fields.mcs == c[1].parse::<u8>().unwrap()
+                        && fields.bandwidth == u8::from(c[0].starts_with("he-er106-"))
+                        && fields.ldpc == ldpc
+                        && fields.dcm == dcm
+                        && fields.stbc == stbc
+                        && fields.midamble_period
+                            == if midamble || ((dcm || stbc || er) && c[5] != "0") {
+                                Some(c[5].parse().unwrap())
+                            } else {
+                                None
+                            }
+                }));
+                assert_eq!(record.metadata(), &record.metadata().clone());
+            }
+        }
+    }
+    #[test]
     fn radio_ht_ampdu_packet_source_keeps_duplicate_mpdus() {
         for row in include_str!("../../tests/fixtures/iq/ht-ampdu-index.tsv")
             .lines()
@@ -198,6 +333,24 @@ mod tests {
                 row.starts_with("ht-ampdu-7-gi800-")
                     && row.split('\t').next().unwrap().ends_with("duplicate")
             })
+            .chain(
+                include_str!("../../tests/fixtures/iq/vht-ampdu-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|row| row.starts_with("vht-ampdu-8-gi800-duplicate\t")),
+            )
+            .chain(
+                include_str!("../../tests/fixtures/iq/vht-ldpc-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|row| row.starts_with("vht-ldpc-8-gi800-duplicate\t")),
+            )
+            .chain(
+                include_str!("../../tests/fixtures/iq/vht-stbc-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|row| row.starts_with("vht-stbc-8-ldpc-gi800-duplicate\t")),
+            )
         {
             let fields: Vec<_> = row.split('\t').collect();
             let bytes = std::fs::read(format!(
@@ -213,7 +366,8 @@ mod tests {
                 .collect_records()
                 .unwrap();
             assert_eq!(records.len(), 2);
-            let expected: Vec<u8> = fields[6]
+            let vht = fields[0].starts_with("vht-");
+            let expected: Vec<u8> = fields[if vht { 5 } else { 6 }]
                 .split(',')
                 .next()
                 .unwrap()
@@ -230,6 +384,12 @@ mod tests {
                 assert!(record.packet().layer::<Dot11>().is_some());
                 assert!(record.metadata().wifi().is_some());
                 let rf = record.metadata().radio().unwrap();
+                assert_eq!(
+                    rf.diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::VhtSignalB { .. })),
+                    vht
+                );
                 assert_eq!(rf.start.sample_index, 37);
                 assert_eq!(rf.start.time_anchor, position().time_anchor);
                 assert_eq!(rf.stripped_fcs_bytes, 4);

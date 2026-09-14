@@ -1,0 +1,31 @@
+version: 1
+kind: feature
+name: wifi_eht_tb_data_iq
+summary: Trigger-configured EHT20 TB per-user IQ to raw PSDU bytes.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: trigger-schedule
+    source: IEEE 802.11be-2024 9.3.1.22.1, Tables 9-53a and 36-34; IEEE 802.11-22/0133r2
+    checks: [ordinary_ru_placement, small_mru_placement, ps160_rejected_for_eht20, single_stream_admission, overlap_exclusion, bounded_schedule]
+  - name: exchange-context
+    source: IEEE 802.11be-2024 9.2.5.2, 36.3.12.10 and 36.3.12.11; IEEE 802.11-22/0202r0
+    checks: [fcs_valid_trigger_only, protection_duration_search_window, trigger_usig_agreement, ul_length_agreement, reset_clears_context]
+  - name: tb-training
+    source: IEEE 802.11be-2024 36.3.10.7, 36.3.11.10 and 36.3.12.10; IEEE 802.11-22/0202r0
+    checks: [no_eht_sig_field, two_symbol_eht_stf, two_x_ltf_gi1600, four_x_ltf_gi3200, isolated_ru_channel_training]
+  - name: tb-user-iq
+    source: IEEE 802.11be-2024 36.3.12.10, 36.3.12.11 and 36.3.13; IEEE 802.11-22/0202r0
+    checks: [bounded_timing, per_user_pilot_phase, bcc_ldpc_psdu, service_integrity, per_mpdu_fcs_publication, simultaneous_disjoint_ru_users]
+coverage_cases: [wifi-eht-tb-data-iq]
+supported_cases:
+  - {name: wifi-eht-tb-data-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Complete 20 MHz EHT TB captures recover independently decodable one-spatial-stream BCC and LDPC users. This does not imply spatial separation of colliding streams.
+      - Trigger scheduling covers the ordinary 26-, 52-, 106-, and 242-tone allocations and the five small-MRU placements valid inside one 20 MHz channel; overlapping and unallocated entries are retained but not decoded.
+      - Streaming publication requires an FCS-valid Trigger inside its protected exchange window and exact Trigger/U-SIG length and spatial-reuse agreement. Each delivered aggregate member still requires its own valid MPDU FCS.

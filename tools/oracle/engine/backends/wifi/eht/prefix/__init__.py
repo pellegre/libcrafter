@@ -1,0 +1,1 @@
+"""EHT prefix reference generators."""

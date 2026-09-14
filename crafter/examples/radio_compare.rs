@@ -7,6 +7,8 @@ mod compare;
 mod ht_compare;
 #[path = "radio_support/transmit_compare.rs"]
 mod transmit_compare;
+#[path = "radio_support/vht_compare.rs"]
+mod vht_compare;
 fn main() -> artifact::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--compare-transmit") {

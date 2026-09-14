@@ -1,0 +1,26 @@
+version: 1
+kind: feature
+name: wifi_he_capacity
+summary: HE20 SU and ER SU rate dimensions and pre/post-FEC payload boundaries.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: su-payload-capacity
+    source: IEEE 802.11ax-2021 Tables27-33/79-86, 27.3.12.5/9/12, Equations27-60-74/140-143
+    checks: [mcs_rates, dcm_restrictions, bcc_restrictions, stbc_grouping, pre_fec_padding, ldpc_extra_segment_wrap, psdu_octet_floor, checked_arithmetic]
+  - name: er-payload-capacity
+    source: IEEE 802.11ax-2021 27.1.1, 27.3.2, Table27-33, 27.3.12.5.1, Equations27-60-74/140-143
+    checks: [explicit_er_context, er_mcs_restrictions, single_data_stream, upper106_dimensions, dcm_filler, stbc_grouping, pre_fec_padding, ldpc_extra_segment_wrap, checked_arithmetic]
+coverage_cases: [wifi-he-su-capacity, wifi-he-er-capacity]
+supported_cases:
+  - {name: wifi-he-su-capacity, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+  - {name: wifi-he-er-capacity, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Private capacity arithmetic, not coded DATA recovery or MIMO qualification. Timing/header integrity must be established separately.
+      - ER242 and upper106 dimensions require explicit ER format context. SU bandwidth code1 remains unsupported here; upper106 payload recovery is a separate integration.
+      - LDPC extra-segment fixtures check signaled geometry in both branches, not the encoder puncturing threshold decision or valid LDPC codewords.

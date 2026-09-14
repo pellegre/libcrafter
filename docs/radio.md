@@ -7,6 +7,31 @@ replay and generation without hardware; `radio-hackrf` adds explicit bounded
 native reception and transmission. Live qualification evidence is described
 below.
 
+## Modern HE extended-range reception
+
+The legacy-mode limits below describe `LegacyWifiDecoder`, not the opt-in
+`WifiDecoder`. The latter also recovers HE ER SU packets from 20 Msps IQ:
+242-tone MCS0-2 and upper106-tone MCS0, with BCC or LDPC, permitted DCM,
+and one DATA stream including two-space-time-stream STBC. The upper106
+allocation occupies part of the same 20 MHz channel; it is not another
+capture sample rate. Midambles, aggregate FCS handling, bounded streaming,
+original packet bytes and ER allocation metadata have independent offline
+tests. `radio_receive --modern` selects the modern decoder for replay.
+
+These tests do not establish live HE interoperability, real-time throughput,
+HE transmission, or support for every HE format. MU and trigger-based layouts
+are separate work. The native hardware and TX qualification described elsewhere
+in this document must not be interpreted as qualification of these HE modes.
+
+`HeMuSignalFields` separately decodes HE MU SIG-A bits or interleaved soft
+metrics after the caller has established the MU format. It checks CRC, tail,
+and format-specific field encodings and preserves the raw SIG-B symbol/user
+count, including the ambiguous uncompressed value 15. `WifiDecoder` now recognizes
+20 MHz MU IQ prefixes and emits `PhyDiagnostic::HeMuSignal`; `radio_receive`
+records `he.format: mu` and explicitly marks MAC integrity as not established.
+SIG-B allocation decoding and MU DATA recovery remain unimplemented, so these
+candidates report `UnsupportedPhy` without publishing MAC frames.
+
 ## Boundary and scope
 
 IQ sources supply owned sample chunks to a stateful PHY decoder. Reconstructed

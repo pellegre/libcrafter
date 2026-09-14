@@ -67,6 +67,11 @@ behaviors:
       - ack
     checks:
       - subtype_address_layout_preserved
+  - name: trigger-header
+    source: IEEE 802.11ax-2021 9.3.1.22.1 Figure 9-64a
+    frame_types: [control]
+    subtypes: [trigger]
+    checks: [sixteen_byte_mac_header, receiver_transmitter_roles, body_preserved_as_raw, truncated_transmitter_structured_error]
   - name: unknown-subtype
     frame_types:
       - management
@@ -87,6 +92,7 @@ coverage_cases:
   - dot11-protected-raw
   - dot11-management-basic
   - dot11-control-basic
+  - dot11-trigger-header
   - dot11-unknown-subtype-raw
   - malformed-dot11-truncated-header
   - crafter-dot11-roundtrip
@@ -127,6 +133,9 @@ supported_cases:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
+    byte_policy: strict_bytes
+  - name: dot11-trigger-header
+    directions: [backend_to_libcrafter, libcrafter_to_backend, roundtrip]
     byte_policy: strict_bytes
   - name: dot11-unknown-subtype-raw
     directions:

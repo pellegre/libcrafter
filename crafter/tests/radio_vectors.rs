@@ -4,6 +4,2147 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_eht_data_ldpc_independent_inventory() {
+    let layouts = include_str!("fixtures/iq/eht-data-ldpc-index.tsv");
+    assert_eq!(layouts.lines().skip(1).count(), 4259);
+    assert_eq!(
+        hex(&Sha256::digest(layouts.as_bytes())),
+        "580ae30fc80e009558835f452c504c11f84d53849a6c5f828e1772ca0231b6c3"
+    );
+    assert!(layouts
+        .lines()
+        .skip(1)
+        .all(|row| row.split('\t').count() == 13));
+
+    let payloads = include_str!("fixtures/iq/eht-data-ldpc-payload-index.tsv");
+    assert_eq!(payloads.lines().skip(1).count(), 120);
+    assert_eq!(
+        hex(&Sha256::digest(payloads.as_bytes())),
+        "f29f1ee62e91740b71d5e4e10ea83216644a9bf2d7d986f792c3906af0bdb4f6"
+    );
+    assert!(payloads
+        .lines()
+        .skip(1)
+        .all(|row| row.split('\t').count() == 26));
+}
+
+#[test]
+fn radio_eht_data_ldpc_iq_independent_inventory() {
+    let rows = include_str!("fixtures/iq/eht-data-ldpc-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 432);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "49b4810bbf75a967aae3f4f6ef09f3824c05e9caeee76280da2eccc26df95acf"
+    );
+    let corpus = fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq/eht-data-ldpc-iq.cs8"),
+    )
+    .unwrap();
+    assert_eq!(
+        hex(&Sha256::digest(&corpus)),
+        "0f447f7596a0dbf405b7124d82d67a0f54d8ddb16cff56adbbb46d9bdd814d7c"
+    );
+    let mut cursor = 0;
+    for row in rows.lines().skip(1) {
+        let columns: Vec<_> = row.split('\t').collect();
+        assert_eq!(columns.len(), 20);
+        let mcs = columns[3].parse::<u8>().unwrap();
+        assert_ne!(mcs, 13);
+        if mcs == 12 {
+            assert_eq!(columns[16], "0");
+        }
+        let offset: usize = columns[17].parse().unwrap();
+        let length: usize = columns[18].parse().unwrap();
+        assert_eq!(offset, cursor);
+        cursor += length;
+        assert_eq!(hex(&Sha256::digest(&corpus[offset..cursor])), columns[19]);
+    }
+    assert_eq!(cursor, corpus.len());
+}
+
+#[test]
+fn radio_eht_data_bcc_iq_independent_inventory() {
+    let rows = include_str!("fixtures/iq/eht-data-bcc-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 352);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "7c11073536dbeffa5dbdeae269df1607ecf59c73566846a53f1bd978530eaa25"
+    );
+    let corpus = fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq/eht-data-bcc-iq.cs8"),
+    )
+    .unwrap();
+    assert_eq!(
+        hex(&Sha256::digest(&corpus)),
+        "23f22ee49cabc85c2ff4423fe9ceafaaba138c247e5d152227caf8ae12ecce84"
+    );
+    let mut cursor = 0;
+    for row in rows.lines().skip(1) {
+        let columns: Vec<_> = row.split('\t').collect();
+        assert_eq!(columns.len(), 17);
+        let offset: usize = columns[14].parse().unwrap();
+        let length: usize = columns[15].parse().unwrap();
+        assert_eq!(offset, cursor);
+        cursor += length;
+        assert_eq!(hex(&Sha256::digest(&corpus[offset..cursor])), columns[16]);
+    }
+    assert_eq!(cursor, corpus.len());
+}
+
+#[test]
+fn radio_eht_ofdma_data_resource_geometry_oracle_inventory() {
+    let generator =
+        include_bytes!("../../tools/oracle/engine/backends/wifi/eht/data/ofdma/resource.py");
+    assert_eq!(
+        hex(&Sha256::digest(generator)),
+        "d8b7836aa7778a38fc75734d3c6910ba2ad45bbf546096ee95689850b0f82099"
+    );
+}
+
+#[test]
+fn radio_eht_ofdma_data_bcc_iq_independent_inventory() {
+    let generator = include_bytes!("../../tools/oracle/engine/backends/wifi/eht/data/ofdma/bcc.py");
+    assert_eq!(
+        hex(&Sha256::digest(generator)),
+        "129ee46edde7be262dadd313e683418612e9d4ddc4f2790115b35321492fd22d"
+    );
+
+    let rows = include_str!("fixtures/iq/eht-ofdma-data-bcc-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 48);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "a814f5817a0e9e9945ff86bee29868f678c3c1aa350cb3c13caa7212ba7f1ae6"
+    );
+    let corpus = fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/iq/eht-ofdma-data-bcc-iq.cs8"),
+    )
+    .unwrap();
+    assert_eq!(
+        hex(&Sha256::digest(&corpus)),
+        "de8ad3de08317e1645ab18520387d89c17a1d6f12c55ded6e057e2a46b061e24"
+    );
+    let mut cursor = 0;
+    for row in rows.lines().skip(1) {
+        let columns: Vec<_> = row.split('\t').collect();
+        assert_eq!(columns.len(), 19);
+        assert!(matches!(columns[3], "0" | "24" | "25" | "48" | "55" | "64"));
+        let offset: usize = columns[16].parse().unwrap();
+        let length: usize = columns[17].parse().unwrap();
+        assert_eq!(offset, cursor);
+        cursor += length;
+        assert_eq!(hex(&Sha256::digest(&corpus[offset..cursor])), columns[18]);
+    }
+    assert_eq!(cursor, corpus.len());
+}
+
+#[test]
+fn radio_eht_ofdma_data_ldpc_iq_independent_inventory() {
+    let generator =
+        include_bytes!("../../tools/oracle/engine/backends/wifi/eht/data/ofdma/ldpc.py");
+    assert_eq!(
+        hex(&Sha256::digest(generator)),
+        "c240eb9c69c0e71b92f1ab7e866f2a6858805eac08cc766b1012fdc316f29406"
+    );
+
+    let rows = include_str!("fixtures/iq/eht-ofdma-data-ldpc-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 24);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "e2abd40f156fd2049a2a2749e9484dbef746bc1063f28a004b90f7a2fde0309a"
+    );
+    let corpus = fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/iq/eht-ofdma-data-ldpc-iq.cs8"),
+    )
+    .unwrap();
+    assert_eq!(
+        hex(&Sha256::digest(&corpus)),
+        "39bb00fef1701f54e86499948ffd9afaa61a25728bf8aaeaeef423f4f8faf243"
+    );
+    let mut cursor = 0;
+    for row in rows.lines().skip(1) {
+        let columns: Vec<_> = row.split('\t').collect();
+        assert_eq!(columns.len(), 22);
+        assert!(matches!(columns[3], "0" | "24" | "25" | "48" | "55" | "64"));
+        let mcs: Vec<_> = columns[5]
+            .split(',')
+            .map(|value| value.parse::<u8>().unwrap())
+            .collect();
+        assert!(mcs.iter().all(|mcs| *mcs != 13));
+        if mcs.contains(&12) {
+            assert_eq!(columns[3], "64");
+            assert_eq!(columns[18], "0");
+        }
+        let offset: usize = columns[19].parse().unwrap();
+        let length: usize = columns[20].parse().unwrap();
+        assert_eq!(offset, cursor);
+        cursor += length;
+        assert_eq!(hex(&Sha256::digest(&corpus[offset..cursor])), columns[21]);
+    }
+    assert_eq!(cursor, corpus.len());
+}
+
+#[test]
+fn radio_he_tb_mu_carrier_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-mu-carrier-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 5);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "472494dc2765fa1d663cdd8954824406fc05ec7c04ee63562130d18d979a3ae8"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 9);
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[7].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[8]);
+        assert_eq!(c[4].split(',').count(), 3);
+        assert!(c[6].parse::<u8>().unwrap() <= 32);
+    }
+}
+
+#[test]
+fn radio_he_tb_trs_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-trs-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 13);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "64adf6e715b9e0b84dbeffe25704645f62ff18bebbd3336b1e7c3a7e03baa53d"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 16);
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[14].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[15]);
+        assert_eq!(c[12] == "-", !c[1].starts_with("clean"));
+        assert!(c[13].parse::<u8>().unwrap() <= 32);
+    }
+}
+
+#[test]
+fn radio_he_tb_he_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-he-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 12);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "1a634c5d5cf0332f47e7060e4e1a9646f631a87fef0167e2e555ec7da5f0dc36"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 18);
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[10].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[11]);
+        assert!(matches!(c[12], "su" | "er"));
+        assert_eq!(c[17], "37");
+        assert_eq!(c[9] == "-", c[1] != "clean");
+    }
+}
+
+#[test]
+fn radio_he_tb_exchange_quality_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-exchange-quality.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 4);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "2935c828c4e7821f079835ffd30593164f9dcc9cc2d4dd48dcb93d5a01ab48ac"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let evm = c[5].parse::<f32>().unwrap();
+        let errors = c[6].parse::<usize>().unwrap();
+        assert_eq!(c[7], "1404");
+        if c[3] == "1.00" {
+            assert!(evm > -27. && errors > 600);
+        } else {
+            assert_eq!(c[3], "0.25");
+            assert!(evm < -33. && errors < 20);
+        }
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(hex(&Sha256::digest(iq)), c[9]);
+    }
+}
+
+#[test]
+fn radio_he_tb_vht_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-vht-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 24);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "1f4a1c6c903eda8107041976134a21d714c8fbf13c441d2e857e4f066be05ca6"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[10].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[11]);
+        assert!(matches!(c[12], "1" | "2"));
+    }
+}
+
+#[test]
+fn radio_he_tb_ht_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-ht-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 16);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "4b900e1f6a6d59b54cf488d183edd978620460add7e554913e46f9fbd012a021"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[10].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[11]);
+    }
+}
+
+#[test]
+fn radio_he_tb_multi_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-multi-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 12);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "cb2e23a2d796d2e58698542f230973b50ed5bd8fe880d67768694c36ded94787"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[9].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[10]);
+    }
+}
+
+#[test]
+fn radio_he_tb_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 65);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "f3e7c1fea50c48e044cf99a608e5a3acce00e446c07e35fff9f624bec502ee1d"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[10].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[11]);
+    }
+}
+
+#[test]
+fn radio_he_tb_schedule_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-schedule.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 2304);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "b5c863fa4068859d05329925c58a1c1fcac060d951096b450c7b4f34b1f8a5e8"
+    );
+}
+
+#[test]
+fn radio_he_tb_public_exports() {
+    use crafter::prelude::{HeSignalError, HeTbSignalError, HeTbSignalFields};
+    assert!(matches!(
+        HeTbSignalFields::decode(&[]),
+        Err(HeTbSignalError::Signal(HeSignalError::BitCount {
+            available: 0
+        }))
+    ));
+}
+
+#[test]
+fn radio_he_tb_signal_inventory() {
+    for (rows, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-tb-signal-a-index.tsv"),
+            2048,
+            "b465f1d4313572c4073ed8f094d2c3506f25ad1032e30fc1ef59a8cd01307ccc",
+        ),
+        (
+            include_str!("fixtures/iq/he-tb-signal-a-invalid.tsv"),
+            57,
+            "e23f2d8662814b7eb19c0d3bb65993348d93bbb796518892b4879a15128938da",
+        ),
+    ] {
+        assert_eq!(rows.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(rows.as_bytes())), digest);
+    }
+}
+
+#[test]
+fn radio_he_mu_mixed_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-mu-mixed-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 336);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "2670e2c262cb7b35e451e062b4dfd6507126b0219bc1153d669f8c05659ddd8a"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 11);
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[9].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[10]);
+    }
+}
+
+#[test]
+fn radio_he_mu_stbc_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-mu-stbc-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 380);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "d4f4f472de89387e343253bdf20652ea6655ac42b96315cdbe9ce282be3cfb5a"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 15);
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[13].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[14]);
+    }
+}
+
+#[test]
+fn radio_he_mu_compressed_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-mu-compressed-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 242);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "e86f08a40ae62f57901bcb2f86ad419bfd42df3c51910606bdfc2dafb160e1dc"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[11].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[12]);
+    }
+}
+
+#[test]
+fn radio_he_mu_ampdu_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-mu-ampdu-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 94);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "16b3c08bd66f42fde0b4c86b50ee99504c79c0baedadc26aa4c9ff5f4aedf2a5"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[9].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[10]);
+    }
+}
+
+#[test]
+fn radio_he_tb_multi_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-multi-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 276);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "3471098cd4db5843780e94b2729477cb150a9d5950593a48b0da9a462b44cff7"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[17].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[18]);
+    }
+}
+
+#[test]
+fn radio_he_tb_data_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-data-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 282);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "39db3c567951d6597ea2d832696c3ec3dbdcbc3e7cc38f45c6b6ad62366ff0ac"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[17].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[18]);
+    }
+}
+
+#[test]
+fn radio_he_mu_data_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-mu-data-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 252);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "c4546f53fb1a583de441d02ce13cfd9df66de5e3831a55b1f90e9dda287a4072"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/iq")
+            .join(format!("{}.cs8", c[0]));
+        let iq = fs::read(path).unwrap();
+        assert_eq!(iq.len(), 2 * c[12].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[13]);
+    }
+}
+
+#[test]
+fn radio_he_ru_symbol_inventory() {
+    let rows = include_str!("fixtures/iq/he-ru-symbol.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 640);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "83d668c99b71dc7de1ff2bd34218fff3db454a9315b6ea628cd67ec9dbbed7a1"
+    );
+}
+
+#[test]
+fn radio_he_ru_stbc_symbol_inventory() {
+    let rows = include_str!("fixtures/iq/he-ru-stbc-symbol.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 880);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "f4946013515cfaa20dc6ee3f65ae2bee7ec5b8b2961aac0089c672cc5ccccf8e"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 15);
+        for j in 0..2 {
+            assert!(c[11 + j].bytes().all(|b| matches!(b, b'0' | b'1' | b'-')));
+            assert_eq!(c[13 + j].split(',').count(), 512);
+        }
+    }
+}
+
+#[test]
+fn radio_he_small_ru_dcm_inventory() {
+    for (rows, hash) in [
+        (
+            include_str!("fixtures/iq/he-dcm-half12-metrics.tsv"),
+            "fd319f2f7a06a2d27eca46cab4c724744d4c27176cca1793aa253c63f64f1db0",
+        ),
+        (
+            include_str!("fixtures/iq/he-dcm-half24-metrics.tsv"),
+            "3ae95868dfd2ea67e5babe53aff422330fb9d1d2133d52061763980e6fc2eead",
+        ),
+    ] {
+        assert_eq!(rows.lines().skip(1).count(), 660);
+        assert_eq!(hex(&Sha256::digest(rows.as_bytes())), hash);
+    }
+}
+
+#[test]
+fn radio_he_mu_ldpc_payload_inventory() {
+    let index = include_str!("fixtures/iq/he-mu-ldpc-payload.tsv");
+    assert_eq!(index.lines().skip(1).count(), 438);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "3035d314eafd50d1ed133e16b13a4ef815c0d526484832d1fad649854ff62e08"
+    );
+    for row in index.lines().skip(1) {
+        assert_eq!(row.split('\t').count(), 10);
+    }
+}
+
+#[test]
+fn radio_he_mu_ldpc_layout_inventory() {
+    let index = include_str!("fixtures/iq/he-mu-ldpc-layout.tsv");
+    assert_eq!(index.lines().skip(1).count(), 13696);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "379299de2562c00b4529df9649cb0f9378501647d6534a761bf5c256c4c2d79c"
+    );
+    for row in index.lines().skip(1) {
+        assert_eq!(row.split('\t').count(), 18);
+    }
+}
+
+#[test]
+fn radio_he_mu_bcc_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-mu26-bcc-index.tsv"),
+            415,
+            "dc24a7449da2de47df006b5178192aca6d744c14f93d4e9664b6f579b8dcb7e5",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu52-bcc-index.tsv"),
+            429,
+            "5b3a3aa667caa137a6202365abd5543ef154f4f309a30c240d675582e0a6da81",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu106-bcc-index.tsv"),
+            435,
+            "3c9ff693017ddbb4194df4d8228376ff8c46a16cfc9b38c62aa934e5768a21ee",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu242-bcc-index.tsv"),
+            435,
+            "34be3a132c4d76b30cbdbd65082a379b9cb708adfdbb05b035b1197dab8635f4",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        for row in index.lines().skip(1) {
+            assert_eq!(row.split('\t').count(), 10);
+        }
+    }
+}
+
+#[test]
+fn radio_he_mu_capacity_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-mu26-capacity-index.tsv"),
+            7078,
+            "e18104a8e7ef0634d4389beeaaf68aa88b689ed7f0c77b125a2de7a03071a534",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu52-capacity-index.tsv"),
+            7585,
+            "0425d4d62840179dc5fc17f298581ce7f5142703ae044376628439e6d3671298",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu106-capacity-index.tsv"),
+            7942,
+            "23ed9964d49946e6684a6e1815579d82a07eac3f24e2a0b609092e9803802b2e",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu242-capacity-index.tsv"),
+            8253,
+            "c5f05bab91ef075f49d3f05a5a71d16a9969e876f5e1c7c1e93243e6e0066642",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        for row in index.lines().skip(1) {
+            assert_eq!(row.split('\t').count(), 19);
+        }
+    }
+}
+
+#[test]
+fn radio_he_mu_training_inventory() {
+    let index = include_str!("fixtures/iq/he-mu-training-index.tsv");
+    assert_eq!(index.lines().skip(1).count(), 384);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "89d388695f4c197b44795849f67cae1cbd6c3a6a852fd99ff93481c404b5804f"
+    );
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 9);
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(bytes.len(), 2 * c[7].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[8]);
+    }
+}
+
+#[test]
+fn radio_he_mu_stbc_training_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-mu-stbc-training-index.tsv"),
+            768,
+            "7172fb83a0f1e666ed2be5b76ea27d9faccc24fa5a25baf9a47a062eccc77cb3",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu-stbc-training-long-index.tsv"),
+            192,
+            "e59558e73e714776010f4d4ece4dc5f53e97dce37fe79d60abbfdce5e83cae08",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), 10);
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len(), 2 * c[8].parse::<usize>().unwrap());
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[9]);
+        }
+    }
+}
+
+#[test]
+fn radio_he_ldpc_partial_inventory() {
+    let index = include_str!("fixtures/iq/he-ldpc-partial-index.tsv");
+    assert_eq!(index.lines().skip(1).count(), 18);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "de9e4120ff11daca41416a987b04e0236b3dfef5261c3462d76a06cd290a8425"
+    );
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(bytes.len() % 2, 0);
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[5]);
+    }
+}
+
+#[test]
+fn radio_he_er106_training_inventory() {
+    let index = include_str!("fixtures/iq/he-er106-training-index.tsv");
+    assert_eq!(index.lines().skip(1).count(), 54);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "53b4eb9934866189c59a7fbb418ed447b979d8eccdaa5a13b2311221a67fbd66"
+    );
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(bytes.len(), 2 * c[6].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[7]);
+    }
+}
+
+#[test]
+fn radio_he_dcm_independent_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-dcm-metrics.tsv"),
+            660,
+            "c2033d5a6d75eb4aff85721511bf60fa2125038fd59a096a965be4ba99f873be",
+        ),
+        (
+            include_str!("fixtures/iq/he-dcm-iq-index.tsv"),
+            128,
+            "fc4b672976f41c179d3cf8a388bb6d4e9844fd4c6f7141c2f41695a7d80e3e56",
+        ),
+        (
+            include_str!("fixtures/iq/he-dcm-iq-invalid-index.tsv"),
+            8,
+            "fc26ea65326669bb2c605af7e37885d58e30360e4cf42e89ac851f0470f499f5",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        if count == 660 {
+            continue;
+        }
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len() % 2, 0);
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+        }
+    }
+}
+
+#[test]
+fn radio_he_midamble_iq_independent_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-midamble-iq-index.tsv"),
+            270,
+            "5a4c886d78ab0221da3492c3d20eea3cb3fc4b159b999617c73966bbc7928b68",
+        ),
+        (
+            include_str!("fixtures/iq/he-midamble-iq-invalid-index.tsv"),
+            12,
+            "712df6a3e8b59e6c9e5c1b4bd2f1e074d241121c490f1b83b509194c75b1b1b7",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len() % 2, 0);
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+        }
+    }
+}
+
+#[test]
+fn radio_he_ldpc_iq_independent_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-ldpc-iq-index.tsv"),
+            240,
+            "91595117b54d5fa281949454db33da970a0de962c00032006ca4bac5cfbb54c0",
+        ),
+        (
+            include_str!("fixtures/iq/he-ldpc-iq-invalid-index.tsv"),
+            6,
+            "4dc525ec58d1a8ced601edb9987988b9c75f3340358533dc985fcfb8458a75bb",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len() % 2, 0);
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+        }
+    }
+}
+
+#[test]
+fn radio_he_demapping_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-qam-index.tsv"),
+            1313,
+            "2f0e914ad4c1c9505cf2952d98fb0a1a308a9370eb27eb0ea27e789b838b2d7d",
+        ),
+        (
+            include_str!("fixtures/iq/he-ldpc-tones.tsv"),
+            234,
+            "b64b4403383867d3d1aa9382baa4cf4a7d7e0536a35c381084c917b1a38d111f",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+    }
+}
+
+#[test]
+fn radio_he_ldpc_rate_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-er106-ldpc-rate-index.tsv"),
+            705,
+            "00044320324bb055031a989cd8f5b9f44df5a1321362a8e797c30e3dd6250301",
+        ),
+        (
+            include_str!("fixtures/iq/he-er106-ldpc-rate-codewords.tsv"),
+            57,
+            "df509abf995e77c32bfde8a0a9553d972c5aa67a7be083b3c6f100547340076d",
+        ),
+        (
+            include_str!("fixtures/iq/he-er242-ldpc-rate-index.tsv"),
+            1839,
+            "3cc66fe044aff08f68a479f60873e4adf18c9fe4199a3f5d67803334e1b76aea",
+        ),
+        (
+            include_str!("fixtures/iq/he-er242-ldpc-rate-codewords.tsv"),
+            159,
+            "13150f2c9fafb59a916915a99b715828a8621214cc34ebb0e614b66bf7487258",
+        ),
+        (
+            include_str!("fixtures/iq/he-ldpc-rate-index.tsv"),
+            17583,
+            "cd67b4b225fd05e1ffd694ecd9c7aabca00cedc34cf231fe57bbeacbf505221b",
+        ),
+        (
+            include_str!("fixtures/iq/he-ldpc-rate-codewords.tsv"),
+            72,
+            "a666cf70157524543010190b6f30d0ceb97be2749782087113aad9e8bbf678f1",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+    }
+}
+#[test]
+fn radio_he_ampdu_iq_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-ampdu-iq-index.tsv");
+    assert_eq!(index.lines().skip(1).count(), 200);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "026a46f976ab82f571e98d74fd26a1934a72491828951b7cfb1219e628998656"
+    );
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(bytes.len() % 2, 0);
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[9]);
+    }
+}
+
+#[test]
+fn radio_he_ampdu_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-ampdu-index.tsv");
+    assert_eq!(index.lines().skip(1).count(), 46);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "2967db32a13f23cb370a410ec457bb3781f7117cd21ef87bcd365b6261c2d30d"
+    );
+}
+
+#[test]
+fn radio_he_bcc_iq_independent_inventory() {
+    for (index, count, digest, column) in [
+        (
+            include_str!("fixtures/iq/he-bcc-iq-index.tsv"),
+            151,
+            "cc482b26bee4c614f2b91222802d3b92fac3c7edf10d0142d9b154ff4be9eb18",
+            12,
+        ),
+        (
+            include_str!("fixtures/iq/he-bcc-iq-invalid-index.tsv"),
+            6,
+            "d8abb836c5f7cdc76f7e74b1ea7d92a189abb947c19b2ea7648d94234e32be20",
+            2,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[column]);
+            assert_eq!(bytes.len() % 2, 0);
+            if column == 12 {
+                assert!(bytes.len() / 2 >= c[11].parse::<usize>().unwrap());
+            }
+        }
+    }
+}
+
+#[test]
+fn radio_he_bcc_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-bcc-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "34be3a132c4d76b30cbdbd65082a379b9cb708adfdbb05b035b1197dab8635f4"
+    );
+    assert_eq!(index.lines().skip(1).count(), 435);
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 10);
+        assert_eq!(c[7].len() % 2, 0);
+        assert!(c[7].bytes().all(|b| b.is_ascii_hexdigit()));
+        assert!(c[8].bytes().all(|b| matches!(b, b'0' | b'1')));
+    }
+}
+
+#[test]
+fn radio_he_capacity_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-capacity-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "c5f05bab91ef075f49d3f05a5a71d16a9969e876f5e1c7c1e93243e6e0066642"
+    );
+    assert_eq!(index.lines().skip(1).count(), 8253);
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 19);
+        assert!(c.iter().all(|v| v.parse::<usize>().is_ok()));
+    }
+}
+
+#[test]
+fn radio_he_timing_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-timing-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "22cbcb0dbf194548821bf1d9e86851f37e93baadc0e43766ed76576c8f63794a"
+    );
+    assert_eq!(index.lines().skip(1).count(), 10252);
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 16);
+        assert!(c[..15].iter().all(|v| v.parse::<usize>().is_ok()));
+        assert_eq!(c[15].len(), 64);
+        assert!(c[15].bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+}
+
+#[test]
+fn radio_he_er_timing_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-er-timing-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "9cc92600184627e1c6b8ac72b3b016a1c1d3458f7470a6935cda32b3cd811baa"
+    );
+    assert_eq!(index.lines().skip(1).count(), 2479);
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 16);
+        assert!(c[..15].iter().all(|v| v.parse::<usize>().is_ok()));
+        assert_eq!(c[15].len(), 64);
+        assert!(c[15].bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+}
+
+#[test]
+fn radio_he_er_capacity_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-er106-capacity-index.tsv"),
+            177,
+            "fb3cae1a0cbce0c7da3e23a446f82b19ff0ea5ffdbf2c8bceae01e428e302231",
+        ),
+        (
+            include_str!("fixtures/iq/he-er242-capacity-index.tsv"),
+            619,
+            "c14e68a1b1e2cfd1b4c380de74746bcfb37a2693a22993cf0482e8d51f6c4358",
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), 19);
+            assert!(c.iter().all(|v| v.parse::<usize>().is_ok()));
+        }
+    }
+}
+
+#[test]
+fn radio_he_er_bcc_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-er106-bcc-index.tsv"),
+            165,
+            "43bf9010944133740b9aa9c9260d055e1c19ae4e1f140b69396f9aa5969a1547",
+        ),
+        (
+            include_str!("fixtures/iq/he-er242-bcc-index.tsv"),
+            225,
+            "aff08147ebfd2cd26e6dd5052f2a6d84c2285013a75aff4830673ff3ae75865f",
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), 10);
+            assert!(c[..7].iter().all(|v| v.parse::<usize>().is_ok()));
+            assert_eq!(c[7].len() % 2, 0);
+            assert!(c[7].bytes().all(|b| b.is_ascii_hexdigit()));
+            assert!(c[8].bytes().all(|b| b == b'0' || b == b'1'));
+            assert!(matches!(c[9], "0" | "1"));
+        }
+    }
+}
+
+#[test]
+fn radio_he_training4_independent_inventory() {
+    for (index, count, digest, column) in [
+        (
+            include_str!("fixtures/iq/he-training-sparse-index.tsv"),
+            36,
+            "1c5741c605b8de45d5bb3f1eb0bc8c61acc6bad4b6fd3f5938dcf7dfe9c94595",
+            13,
+        ),
+        (
+            include_str!("fixtures/iq/he-training4-index.tsv"),
+            24,
+            "17fee2b42df2d6c47b42ed75dbb9728889e0b5396dff24406cebaaf1df295beb",
+            13,
+        ),
+        (
+            include_str!("fixtures/iq/he-training4-invalid-index.tsv"),
+            5,
+            "13a7066808a4a502e5f2005b6cb111d280590622cb39e4061eabf4e128107631",
+            2,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[column]);
+            assert_eq!(bytes.len() % 2, 0);
+            if column == 13 {
+                assert_eq!(bytes.len() / 2, c[12].parse::<usize>().unwrap());
+                assert_eq!(c[9].len(), 242);
+            }
+        }
+    }
+}
+
+#[test]
+fn radio_he_er_prefix_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-er-prefix-index.tsv"),
+            288,
+            "55590eb00e6989408b5cdf26114004a7ab57e588e7872dea33d59c864cddebd8",
+        ),
+        (
+            include_str!("fixtures/iq/he-er-prefix-invalid-index.tsv"),
+            18,
+            "a52d69814d68e8f805efd7efd6d44eb3e3c00eca65c2565ffc40e938d3fe4f66",
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+            assert_eq!(bytes.len() % 2, 0);
+            if count == 288 {
+                assert_eq!(c.len(), 6);
+                assert_eq!(c[1].len(), 52);
+                assert_eq!(c[2].len(), 208);
+                assert_eq!(bytes.len() / 2, c[4].parse::<usize>().unwrap());
+            }
+        }
+    }
+}
+
+#[test]
+fn radio_he_stbc_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-stbc-iq-index.tsv"),
+            368,
+            "6a450e01748022ca63e1aa30836c81d74d731ea28bdffa30e84eae119abef1d9",
+        ),
+        (
+            include_str!("fixtures/iq/he-stbc-iq-invalid-index.tsv"),
+            8,
+            "3f865fb4a1a91c8b9c0ed3e99398460143730727da82d7e74b1ee26f507dbbc6",
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+            assert_eq!(bytes.len() % 2, 0);
+            if count == 368 {
+                assert_eq!(c.len(), 12);
+                assert!(c[9].parse::<usize>().unwrap() < c[10].parse::<usize>().unwrap());
+                assert!(c[10].parse::<usize>().unwrap() <= bytes.len() / 2);
+            }
+        }
+    }
+}
+
+#[test]
+fn radio_he_er_iq_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-er106-iq-index.tsv"),
+            104,
+            "01ee9000428eddb43d7a3e53aecc8ab8e880ac496a055ff7bfd44ae59806aa7a",
+        ),
+        (
+            include_str!("fixtures/iq/he-er106-iq-invalid-index.tsv"),
+            16,
+            "de14caf79bcc26c530515c7b6138dde298d724c2e39a9f2a1a75546cad41f8a9",
+        ),
+        (
+            include_str!("fixtures/iq/he-er-iq-index.tsv"),
+            280,
+            "2f8d73cbc26f8fbd3008c437d49a830da27102ab411cc108ef90556be001de07",
+        ),
+        (
+            include_str!("fixtures/iq/he-er-iq-invalid-index.tsv"),
+            16,
+            "40361f35eb6fde27f06a6551ede214bca579a1c9019167385731bef87a8d4c4d",
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+            assert_eq!(bytes.len() % 2, 0);
+            if count == 280 || count == 104 {
+                assert_eq!(c.len(), 14);
+                assert!(c[9].parse::<usize>().unwrap() < c[10].parse::<usize>().unwrap());
+                assert!(c[10].parse::<usize>().unwrap() <= bytes.len() / 2);
+            }
+        }
+    }
+}
+
+#[test]
+fn radio_he_transform_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-transform-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "4c2f58473a40a86af3e90fbfaf56ad71ba0a5d6f1ad2d50824c91c82cb52c312"
+    );
+    assert_eq!(index.lines().skip(1).count(), 1920);
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 7);
+        assert!(matches!(c[1], "128" | "256"));
+        assert!(c[2].parse::<usize>().unwrap() < c[1].parse::<usize>().unwrap());
+        assert!(c[3..].iter().all(|s| s.parse::<f64>().unwrap().is_finite()));
+    }
+}
+
+#[test]
+fn radio_he_su_prefix_independent_inventory() {
+    for (index, count, digest, column) in [
+        (
+            include_str!("fixtures/iq/he-su-prefix-index.tsv"),
+            96,
+            "44e3444fee65a4b73e6ad033813221360838c996ab691df664e5d0f4580a34bc",
+            4,
+        ),
+        (
+            include_str!("fixtures/iq/he-su-prefix-invalid-index.tsv"),
+            10,
+            "50525a89cdd9af70d1cc80e7ed923f68bf3bb0b75b45c877d1f648fc2d287fb4",
+            2,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len(), 1354);
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[column]);
+        }
+    }
+}
+
+#[test]
+fn radio_he_sig_b_users_inventory() {
+    use crafter::prelude::{
+        HeSigBUserBlock, HeSigBUserContext, HeSigBUserEncoding, HeSigBUserFields,
+    };
+    let rows = include_str!("fixtures/iq/he-sig-b-users.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 3175);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "bfc0c7ff5fec8b4c0eca0fc694c6d60a59502115e9ebd53ede47888fd4fd5d00"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 3);
+        assert!(matches!(c[0].len(), 31 | 52));
+        assert!(c[0].bytes().all(|b| matches!(b, b'0' | b'1')));
+    }
+    let c: Vec<_> = rows.lines().nth(1).unwrap().split('\t').collect();
+    let bits: Vec<_> = c[0].bytes().map(|b| b - b'0').collect();
+    let block = HeSigBUserBlock::decode(
+        &bits,
+        &[HeSigBUserContext::MuMimo {
+            users: 2,
+            position: 0,
+        }],
+    )
+    .unwrap();
+    assert!(matches!(
+        block.users(),
+        [Ok(HeSigBUserFields {
+            sta_id: 123,
+            encoding: HeSigBUserEncoding::MuMimo {
+                streams: 1,
+                start_stream: 0,
+                total_streams: 2,
+                ..
+            }
+        })]
+    ));
+}
+
+#[test]
+fn radio_he_sig_b_coded_inventory() {
+    let rows = include_str!("fixtures/iq/he-sig-b-coded.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 450);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "52ca8c6824a55ceeaa182bf24b6d8b4f73c02fc57c9893fd1d7520f29163b035"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 7);
+        assert!(c[0].parse::<u8>().unwrap() <= 5);
+        for bits in c[4].split(';') {
+            assert!(matches!(bits.len(), 18 | 31 | 52));
+            assert!(bits.bytes().all(|b| matches!(b, b'0' | b'1')));
+        }
+        assert!(c[5].bytes().all(|b| matches!(b, b'0' | b'1')));
+        assert!(c[6].parse::<usize>().unwrap() < c[5].len());
+    }
+}
+
+#[test]
+fn radio_he_sig_b_modulation_inventory() {
+    let rows = include_str!("fixtures/iq/he-sig-b-modulation.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 1564);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "3b5116f8eb04070b86b39eb2dd0b7bcb31b4254f471f85dce66a246b4c0163c0"
+    );
+    let mut symbols = 0;
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 9);
+        let mcs: usize = c[0].parse().unwrap();
+        let dcm: usize = c[1].parse().unwrap();
+        assert!(mcs <= 5 && dcm <= 1 && (dcm == 0 || [0, 1, 3, 4].contains(&mcs)));
+        let per_symbol = 52 * [1, 2, 2, 4, 4, 6][mcs] / (1 + dcm);
+        assert_eq!(c[7].len() % per_symbol, 0);
+        assert!(c[7].bytes().all(|b| matches!(b, b'0' | b'1')));
+        assert_eq!(c[8].split(';').count(), 52 * c[7].len() / per_symbol);
+        if c[6] == "-" {
+            symbols += 1;
+            assert_eq!(c[7].len(), per_symbol);
+        }
+    }
+    assert_eq!(symbols, 1294);
+}
+
+#[test]
+fn radio_he_sig_b_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-sigb-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 172);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "c132bfe018dae64eb29d81df1f7463d6432f1507ddb0a2a6c01b41a784745d9e"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 8);
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[7]);
+        assert_eq!(bytes.len(), 2 * c[6].parse::<usize>().unwrap());
+        let symbols = c[4].parse::<usize>().unwrap();
+        assert!((1..=36).contains(&symbols));
+        assert_eq!(bytes.len() / 2, 677 + 80 * symbols);
+    }
+}
+
+#[test]
+fn radio_he_tb_ldpc_payload_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-ldpc-payload.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 677);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "df539c30f8395a7bc2c3dee2cc3b3016074d98763601c8d3281f8555087b64a1"
+    );
+    let mut counts = [0; 3];
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 10);
+        assert!(c[9].bytes().all(|b| b == b'0' || b == b'1'));
+        assert_eq!(c[8].len() % 2, 0);
+        counts[match c[7] {
+            "ok" => 0,
+            "service" => 1,
+            "damage" => 2,
+            _ => panic!("unknown TB status"),
+        }] += 1;
+    }
+    assert_eq!(counts, [672, 4, 1]);
+}
+
+#[test]
+fn radio_he_tb_ldpc_layout_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-ldpc-layout.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 17276);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "eb94b26c53bf81da87093be696ce41167d7b2bc13ece458fea65f15276a56fe7"
+    );
+    let mut overrides = [0; 2];
+    for row in rows.lines().skip(1) {
+        let c: Vec<usize> = row.split('\t').map(|s| s.parse().unwrap()).collect();
+        assert_eq!(c.len(), 18);
+        assert!((1..=400).contains(&c[8]));
+        assert!(c[7] <= 1 && c[10] <= 1);
+        assert_eq!(c[11] * c[12] - c[13] - c[14] + c[15], c[17]);
+        if c[7] != c[10] {
+            overrides[c[10]] += 1;
+        }
+    }
+    assert!(overrides.iter().all(|n| *n > 1000));
+}
+
+#[test]
+fn radio_he_tb_timing_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-timing.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 3315);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "e06df64f88299449885fb0b6f53817a66082845bad769bbe9969cd684752b235"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 15);
+        let n: Vec<usize> = c[..14].iter().map(|s| s.parse().unwrap()).collect();
+        assert!(n[0] <= 2);
+        assert_eq!(n[6] % 3, 1);
+        assert!(n[6] <= 4095);
+        assert!(n[10] < n[11] && n[11] <= n[12] && n[12] <= n[13]);
+        assert_eq!(c[14].len(), 64);
+    }
+}
+
+#[test]
+fn radio_he_mu_timing_inventory() {
+    let rows = include_str!("fixtures/iq/he-mu-timing.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 26529);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "2dfa1adafa5ea32f957aa72d74f51e0746a6ad8987f55849a10ab6d5fa9e85f9"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 16);
+        let n: Vec<usize> = c[..15].iter().map(|s| s.parse().unwrap()).collect();
+        assert!((1..=36).contains(&n[5]));
+        assert_eq!(n[8] % 3, 2);
+        assert!(n[8] <= 4095);
+        assert!(n[11] < n[12] && n[12] <= n[13] && n[13] <= n[14]);
+        assert_eq!(c[15].len(), 64);
+    }
+}
+
+#[test]
+fn radio_he_sig_b_common_inventory() {
+    use crafter::prelude::{HeSigBCommon20Fields, HeSigBError};
+    let rows = include_str!("fixtures/iq/he-sig-b-common.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 256);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "763265fe78ae7fe9a0bff9c93972e856931d1aa5eaae9c9ae0efc205f8e34051"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 5);
+        assert_eq!(c[1].len(), 18);
+        assert!(c[1].bytes().all(|b| matches!(b, b'0' | b'1')));
+        let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
+        match HeSigBCommon20Fields::decode(&bits) {
+            Ok(fields) => {
+                assert_eq!(c[2], "ok");
+                assert_eq!(fields.user_count(), c[4].parse::<u8>().unwrap());
+            }
+            Err(HeSigBError::ReservedAllocation(_)) => assert_eq!(c[2], "reserved"),
+            Err(HeSigBError::WiderAllocation(_)) => assert_eq!(c[2], "wider"),
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn radio_he_tb_prefix_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-tb-prefix-index.tsv"),
+            256,
+            "d52854b063abf143ab20164a823b81c68a1055b85b08eb8547fa7f494beacd66",
+        ),
+        (
+            include_str!("fixtures/iq/he-tb-prefix-invalid-index.tsv"),
+            14,
+            "f211e011c8784837b9fcd67d524c56d11d0c5d8f17f7a6c6edb731422450ca0d",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len(), 1354);
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+        }
+    }
+}
+
+#[test]
+fn radio_he_mu_prefix_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-mu-prefix-index.tsv"),
+            160,
+            "7163b9ba255cfd4993d38a880b3bbd0c605c7d73198ae80fed2fbafc34a9a123",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu-prefix-invalid-index.tsv"),
+            13,
+            "0a501489eff638f0c4d84086e72da628a97d92b01bcc2c5c20028f9800d27997",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len(), 1354);
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+        }
+    }
+}
+
+#[test]
+fn radio_he_mu_signal_a_independent_inventory() {
+    for (index, count, digest, columns) in [
+        (
+            include_str!("fixtures/iq/he-mu-signal-a-index.tsv"),
+            5280,
+            "6fd4084a1c8696980295f61999734e7ab05a9efdebf6fe72818bee043ba57a8a",
+            19,
+        ),
+        (
+            include_str!("fixtures/iq/he-mu-signal-a-invalid.tsv"),
+            24,
+            "c15bc730a40429bbe66af2a60ca084c39c762534ae97ea962e147d31bb785181",
+            4,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), columns);
+            let bits = c[usize::from(columns == 4)];
+            assert_eq!(bits.len(), 52);
+            assert!(bits.bytes().all(|b| matches!(b, b'0' | b'1')));
+            if columns == 19 {
+                assert_eq!(c[1].len(), 104);
+                assert!(c[1].bytes().all(|b| matches!(b, b'0' | b'1')));
+                let bits: Vec<_> = bits.bytes().map(|b| b - b'0').collect();
+                let fields = crafter::prelude::HeMuSignalFields::decode(&bits).unwrap();
+                assert_eq!(fields.sig_b_symbols_or_users, c[8].parse::<u8>().unwrap());
+            }
+        }
+    }
+}
+
+#[test]
+fn radio_he_signal_a_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-signal-a-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "8dac04fd1271ebc67acf7f237029dbb4abaa00da9ca531fdd069caae68f3f4e7"
+    );
+    assert_eq!(index.lines().skip(1).count(), 1984);
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 20);
+        assert_eq!(c[0].len(), 52);
+        assert_eq!(c[1].len(), 104);
+        assert!(c[..2]
+            .iter()
+            .all(|s| s.bytes().all(|b| matches!(b, b'0' | b'1'))));
+    }
+}
+
+#[test]
+fn radio_vht_stbc_iq_independent_inventory() {
+    let index = include_str!("fixtures/iq/vht-stbc-iq-index.tsv");
+    let invalid = include_str!("fixtures/iq/vht-stbc-iq-invalid-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "d475eeb97bab4cbf0bd773ce40c6efe638dad84baddd473392e5523d27958dd8"
+    );
+    assert_eq!(
+        hex(&Sha256::digest(invalid.as_bytes())),
+        "291f1204bea7af0b7f5f3a9bd2a2e8849d49b0ad58afa64dfe46b015ba3c7bc2"
+    );
+    assert_eq!(index.lines().skip(1).count(), 110);
+    assert_eq!(invalid.lines().skip(1).count(), 9);
+    let mut names = std::collections::BTreeSet::new();
+    for (rows, column) in [(index, 6), (invalid, 2)] {
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert!(names.insert(c[0]));
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[column]);
+            assert_eq!(bytes.len() % 2, 0);
+        }
+    }
+}
+
+#[test]
+fn radio_vht_ldpc_iq_independent_inventory() {
+    let index = include_str!("fixtures/iq/vht-ldpc-iq-index.tsv");
+    let invalid = include_str!("fixtures/iq/vht-ldpc-iq-invalid-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "a027fff896f1a7cb96767e47d417aff5fe8b3484ff4aeab6917531f1c73aa693"
+    );
+    assert_eq!(
+        hex(&Sha256::digest(invalid.as_bytes())),
+        "9edb13a9c24d5ce8ec5413f567786e9f1484e3641d6f1e18c38cfe6eadfbacd3"
+    );
+    assert_eq!(index.lines().skip(1).count(), 73);
+    assert_eq!(invalid.lines().skip(1).count(), 3);
+    let mut names = std::collections::BTreeSet::new();
+    for (rows, column) in [(index, 6), (invalid, 2)] {
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert!(names.insert(c[0]));
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[column]);
+            assert_eq!(bytes.len() % 2, 0);
+        }
+    }
+}
+
+#[test]
+fn radio_vht_ldpc_rate_independent_inventory() {
+    for (data, count, digest, columns) in [
+        (
+            include_str!("fixtures/iq/vht-ldpc-rate-index.tsv"),
+            20412,
+            "a1ea0c327c1293a5ba88a6d823744b8170906ae944da2afbdec666b5ce3e49ec",
+            11,
+        ),
+        (
+            include_str!("fixtures/iq/vht-ldpc-rate-codewords.tsv"),
+            54,
+            "8c63b75d5e434a4807411b9299be4e586ebe4722aeb409ee51f5d2eec3f81bc3",
+            5,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(data.as_bytes())), digest);
+        assert_eq!(data.lines().skip(1).count(), count);
+        let mut keys = std::collections::BTreeSet::new();
+        for row in data.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), columns);
+            assert!(keys.insert((c[0], c[1], c[2])));
+        }
+    }
+}
+
+#[test]
+fn radio_vht_reference_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-reference-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "6d04d84d617e203eb9690468bd89690f91f6c378f208d3a204201ae9f190ceed"
+    );
+    assert_eq!(inventory.lines().skip(1).count(), 9253);
+    let mut names = std::collections::BTreeSet::new();
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 4);
+        assert!(names.insert(c[0]));
+        assert_eq!(c[1].len(), 24);
+        assert!(c[2].is_empty() || c[2].len() == 16);
+    }
+}
+
+#[test]
+fn radio_vht_ampdu_iq_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-ampdu-iq-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "f5ccd1144fc3fb1e02aa71a1953b99cac93ad087b9ad800b7a6d420e60ba7518"
+    );
+    assert_eq!(inventory.lines().skip(1).count(), 54);
+    let mut modes = std::collections::BTreeSet::new();
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 9);
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[6]);
+        assert!(bytes.len() >= 2 * (c[7].parse::<usize>().unwrap() + 64));
+        let shape = if c[0].ends_with("large") {
+            "large"
+        } else if c[0].ends_with("bad-fcs") {
+            "bad-fcs"
+        } else {
+            "duplicate"
+        };
+        modes.insert((
+            c[1].parse::<u8>().unwrap(),
+            c[2].parse::<u8>().unwrap(),
+            shape,
+        ));
+    }
+    for mcs in 0..9 {
+        for gi in [8, 16] {
+            for shape in ["large", "bad-fcs", "duplicate"] {
+                assert!(modes.contains(&(mcs, gi, shape)));
+            }
+        }
+    }
+}
+
+#[test]
+fn radio_vht_ampdu_independent_inventory() {
+    for (inventory, digest, count, columns) in [
+        (
+            include_str!("fixtures/iq/vht-ampdu-delimiters.tsv"),
+            "25d3b8e2cee53ebd56e68b2d0b199e90b9143df0410c7b540ae75f94345321dc",
+            16384,
+            3,
+        ),
+        (
+            include_str!("fixtures/iq/vht-ampdu-index.tsv"),
+            "bd4da6dce66701f14c88a4e6acc19f34a4508663e716c3ba95600941260a7c61",
+            144,
+            5,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(inventory.as_bytes())), digest);
+        assert_eq!(inventory.lines().skip(1).count(), count);
+        let mut names = std::collections::BTreeSet::new();
+        for row in inventory.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), columns);
+            assert!(names.insert(c[0]));
+        }
+    }
+}
+
+#[test]
+fn radio_vht_bcc_iq_independent_inventory() {
+    use crafter::{VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Fields};
+    let inventory = include_str!("fixtures/iq/vht-bcc-iq-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "02ad3e1dea0141b105f245af706ae9f3550b9c2b51aab62a97b0120bb5e47527"
+    );
+    assert_eq!(inventory.lines().skip(1).count(), 108);
+    let invalid = include_str!("fixtures/iq/vht-bcc-iq-invalid-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(invalid.as_bytes())),
+        "657c80df10ede9280dc033317a97c306b7c564ae61a6f888f60b72a4b9d8c142"
+    );
+    assert_eq!(invalid.lines().skip(1).count(), 8);
+    for row in invalid.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 3);
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[2]);
+    }
+    let mut names = std::collections::BTreeSet::new();
+    let mut modes = std::collections::BTreeSet::new();
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 14);
+        assert!(names.insert(c[0]));
+        let mcs = c[1].parse::<u8>().unwrap();
+        let guard = c[2].parse::<usize>().unwrap();
+        let symbols = c[3].parse::<usize>().unwrap();
+        let start = c[10].parse::<usize>().unwrap();
+        let end = c[11].parse::<usize>().unwrap();
+        let signaled_end = c[12].parse::<usize>().unwrap();
+        let bits = |s: &str| s.bytes().map(|b| b - b'0').collect::<Vec<_>>();
+        let a = VhtSignalAFields::decode(&bits(c[5])).unwrap();
+        let b = VhtSignalB20Fields::decode(&bits(c[6]), false).unwrap();
+        assert!(
+            matches!(a.users, VhtSignalAUsers::Single { mcs: n, space_time_streams: 1, ldpc: false, .. } if n == mcs)
+        );
+        assert_eq!(a.short_guard_interval, guard == 8);
+        assert_eq!(a.short_gi_disambiguation, guard == 8 && symbols % 10 == 9);
+        assert_eq!(start, 837);
+        assert_eq!(end, start + (64 + guard) * symbols);
+        assert!(signaled_end >= end && signaled_end - end < 80);
+        let apep = c[13].parse::<u32>().unwrap();
+        let (low, high) = b.apep_length_bounds().unwrap();
+        assert!(low <= apep && apep <= high);
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[9]);
+        assert_eq!(bytes.len(), 2 * (signaled_end + 64));
+        modes.insert((
+            mcs,
+            guard,
+            a.short_gi_disambiguation,
+            c[0].ends_with("offset"),
+        ));
+    }
+    for mcs in 0..9 {
+        for offset in [false, true] {
+            assert!(modes.contains(&(mcs, 16, false, offset)));
+            for disambiguation in [false, true] {
+                assert!(modes.contains(&(mcs, 8, disambiguation, offset)));
+            }
+        }
+    }
+}
+
+#[test]
+fn radio_vht_bcc_data_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-bcc-data-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "b3f3ebe56b10f6269180fa8704b50939c49e2868ba00b023fe259f68a8f141a3"
+    );
+    let mut seeds = std::collections::BTreeSet::new();
+    let mut dimensions = std::collections::BTreeSet::new();
+    let mut valid = 0;
+    let mut invalid = 0;
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 7);
+        assert_eq!(c[3].len(), 26);
+        assert!(c[3]
+            .bytes()
+            .chain(c[5].bytes())
+            .all(|b| b == b'0' || b == b'1'));
+        if c[6] == "1" {
+            valid += 1;
+            seeds.insert(c[2].parse::<u8>().unwrap());
+            dimensions.insert((c[0].parse::<u8>().unwrap(), c[1].parse::<u16>().unwrap()));
+        } else {
+            assert_eq!(c[6], "0");
+            invalid += 1;
+        }
+    }
+    assert_eq!((valid, invalid), (289, 27));
+    assert_eq!(seeds, (1..=127).collect());
+    for dimension in [(0, 1512), (8, 40), (8, 1512)] {
+        assert!(dimensions.contains(&dimension));
+    }
+    for mcs in 0..9 {
+        for symbols in [2, 3, 4, 5, 10, 17] {
+            assert!(dimensions.contains(&(mcs, symbols)));
+        }
+    }
+}
+
+#[test]
+fn radio_vht_qam_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-qam-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "93f7dbd354872a0b18274a99e11b7d27bd6b19748f9b8b820a8a8ad95e05af73"
+    );
+    let mut labels = std::collections::BTreeSet::new();
+    let mut off_grid = 0;
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 11);
+        if c[2] == "-" {
+            off_grid += 1;
+        } else {
+            assert_eq!(c[2].len(), 8);
+            assert!(c[2].bytes().all(|b| b == b'0' || b == b'1'));
+            assert!(labels.insert(c[2]));
+        }
+        for index in [0, 1, 3, 4, 5, 6, 7, 8, 9, 10] {
+            assert!(c[index].parse::<f64>().unwrap().is_finite());
+        }
+    }
+    assert_eq!(labels.len(), 256);
+    assert_eq!(off_grid, 145);
+}
+
+#[test]
+fn radio_vht_timing_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-timing-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "846aab93b8bbbee30b966aa535d3117ed234759089e3cc264e8bc69e7a1dc70a"
+    );
+    assert_eq!(inventory.lines().skip(1).count(), 1105);
+    let mut dimensions = std::collections::BTreeSet::new();
+    for row in inventory.lines().skip(1) {
+        let c: Vec<usize> = row.split('\t').map(|s| s.parse().unwrap()).collect();
+        assert_eq!(c.len(), 10);
+        dimensions.insert((c[0], c[1], c[2]));
+    }
+    for streams in 1..=8 {
+        for short in 0..=1 {
+            assert!(dimensions.contains(&(streams, short, 0)));
+            assert_eq!(dimensions.contains(&(streams, short, 1)), streams % 2 == 0);
+        }
+    }
+}
+
+#[test]
+fn radio_vht_sig_b_public_paths_and_inventory() {
+    use crafter::prelude::{VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields};
+    let inventory = include_str!("fixtures/iq/vht-signal-b20-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "62957edc7e0b8b7de05472e07e6078565ef830d8de1c15fed772ce8ff981afe3"
+    );
+    assert_eq!(inventory.lines().skip(1).count(), 225);
+    let mut ndps = 0;
+    let mut headers = std::collections::BTreeSet::new();
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 9);
+        assert!(headers.insert((c[0], c[1])));
+        let input: Vec<_> = c[0].bytes().map(|b| b - b'0').collect();
+        let result: Result<crafter::radio::VhtSignalB20Fields, crafter::VhtSignalB20Error> =
+            VhtSignalB20Fields::decode(&input, c[1] == "1");
+        let f = result.unwrap();
+        if f.content() == VhtSignalB20Content::Ndp {
+            ndps += 1;
+            assert_eq!(c[1], "0");
+            assert_eq!(
+                f.verify_service(&[]),
+                Err(VhtSignalB20Error::NoServiceForNdp)
+            );
+        } else {
+            let service: Vec<_> = c[7].bytes().map(|b| b - b'0').collect();
+            f.verify_service(&service).unwrap();
+            assert_eq!(
+                f.apep_length_bounds(),
+                Some((c[5].parse().unwrap(), c[6].parse().unwrap()))
+            );
+        }
+    }
+    assert_eq!(ndps, 1);
+}
+
+#[test]
+fn radio_vht_signal_a_public_paths() {
+    use crafter::prelude::{VhtSignalAError, VhtSignalAFields, VhtSignalAUsers};
+    let input: Vec<_> = include_str!("fixtures/iq/vht-signal-a-index.tsv")
+        .lines()
+        .nth(1)
+        .unwrap()
+        .split('\t')
+        .next()
+        .unwrap()
+        .bytes()
+        .map(|b| b - b'0')
+        .collect();
+    let result: Result<crafter::radio::VhtSignalAFields, crafter::VhtSignalAError> =
+        VhtSignalAFields::decode(&input);
+    assert!(matches!(
+        result.unwrap().users,
+        VhtSignalAUsers::Single { .. }
+    ));
+    assert_eq!(
+        VhtSignalAFields::decode(&[]),
+        Err(VhtSignalAError::BitCount {
+            required: 48,
+            available: 0
+        })
+    );
+}
+
+#[test]
+fn radio_vht_signal_a_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-signal-a-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "653021668de364d2ce3c7716968d0e32a54eb297df0c67ead63b0f96e5e2d81f"
+    );
+    let mut headers = std::collections::BTreeSet::new();
+    let mut groups = std::collections::BTreeSet::new();
+    let mut single_user = 0;
+    let mut multi_user = 0;
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 13);
+        assert_eq!(c[0].len(), 48);
+        assert_eq!(c[12].len(), 96);
+        assert!(c[0]
+            .bytes()
+            .chain(c[12].bytes())
+            .all(|b| b == b'0' || b == b'1'));
+        assert!(headers.insert(c[0]));
+        let number = |i: usize| c[i].parse::<usize>().unwrap();
+        let group = number(2);
+        let width = number(1);
+        assert!(width <= 3 && group <= 63);
+        groups.insert((group, width));
+        for i in [3, 5, 6, 7, 8, 9, 11] {
+            assert!(number(i) <= 1);
+        }
+        assert!(number(6) <= number(5));
+        assert_eq!(&c[0][42..], "000000");
+        if group == 0 || group == 63 {
+            single_user += 1;
+            assert!(number(10) <= 9);
+            let nsts = (number(4) & 7) + 1;
+            assert!(number(3) == 0 || nsts % 2 == 0);
+        } else {
+            multi_user += 1;
+            assert_eq!(number(3), 0);
+            assert_eq!(number(11), 1);
+            assert_ne!(number(10) & 8, 0);
+            for user in 0..4 {
+                let nsts = (number(4) >> (3 * user)) & 7;
+                assert!(nsts <= 4);
+                if nsts == 0 {
+                    let coding = if user == 0 {
+                        number(9)
+                    } else {
+                        (number(10) >> (user - 1)) & 1
+                    };
+                    assert_eq!(coding, 1);
+                }
+            }
+        }
+    }
+    assert_eq!((single_user, multi_user), (640, 1240));
+    assert_eq!(headers.len(), 1880);
+    assert_eq!(groups.len(), 64 * 4);
+}
+
+#[test]
 fn radio_extension_training_independent_waveform_integrity() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
     let rows: Vec<_> = include_str!("fixtures/iq/ht-extension-index.tsv")
@@ -347,8 +2488,8 @@ fn radio_sampling_clock_vector_inventory_and_integrity() {
         );
     }
     for (field, file) in [
-        ("generator_sha256", "ofdm_clock_vectors.py"),
-        ("encoder_sha256", "ofdm_vectors.py"),
+        ("generator_sha256", "wifi/ofdm/clock.py"),
+        ("encoder_sha256", "wifi/ofdm/base.py"),
     ] {
         let source = root
             .join("../../../../tools/oracle/engine/backends")

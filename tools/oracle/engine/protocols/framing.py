@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from ..backends.wifi.trigger import basic_trigger_body
+
 from ..sampling import (
     _SamplingContext,
     _declared_ethertype_for_stack,
@@ -46,6 +48,8 @@ _LLC_SNAP_SUPPORTED_FIELDS = frozenset(
 
 
 def _payload_for_context(ctx: _SamplingContext) -> bytes:
+    if ctx.case == "dot11-trigger-header":
+        return basic_trigger_body(ctx.payload)
     dot11 = ctx.sampled_layers.get("dot11")
     if isinstance(dot11, Mapping):
         frame_control = dot11.get("frame_control")

@@ -4,10 +4,33 @@
 //! normalized samples lazily: each component is divided by 128, giving [-1, 1).
 //! IQ is never a packet layer; only recovered MAC bytes cross the packet boundary.
 mod ampdu;
+mod bcc;
 mod data;
 mod dsss;
 mod dsss_tx;
+mod eht;
+pub use eht::{
+    EhtLtfMode, EhtMuMimoUser, EhtMuPpduType, EhtMuUsigFields, EhtNonMuUser, EhtNonOfdmaCommon,
+    EhtNonOfdmaSignal, EhtNonOfdmaUsers, EhtOfdmaCommon, EhtOfdmaSignal, EhtOfdmaUser,
+    EhtOfdmaUserKind, EhtResourceUnit, EhtRuAllocation20, EhtRuComponent, EhtRuSize, EhtSigError,
+    EhtSigMcs, EhtTbUsigFields, EhtUsigError, EhtUsigFields, EhtUsigFormat,
+};
+mod he;
+pub use he::mu::sig_b::coded::Error as HeSigBCodedError;
+pub use he::mu::sig_b::iq::Fields as HeMuSigBFields;
+pub use he::mu::sig_b::{
+    HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext,
+    HeSigBUserEncoding, HeSigBUserFields,
+};
+pub use he::mu::MuSignal as HeMuSignalFields;
+pub use he::tb::{Error as HeTbSignalError, TbSignal as HeTbSignalFields};
+pub use he::{Error as HeSignalError, SuSignal as HeSuSignalFields};
 mod ht;
+mod vht;
+pub use vht::{
+    VhtSignalAError, VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content, VhtSignalB20Error,
+    VhtSignalB20Fields,
+};
 mod ldpc;
 pub use ht::{
     HtCoding, HtFormat, HtGuardInterval, HtMcs, HtSignalBits, HtSignalError, HtSignalFields,
@@ -25,7 +48,9 @@ pub use hackrf_tx::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
 mod parallel;
 pub use parallel::{ParallelLegacyWifiDecoder, ParallelWifiDecoder};
 mod replay;
+mod resource_unit;
 mod signal;
+mod signaling;
 mod source;
 mod stbc;
 mod sync;
@@ -253,8 +278,82 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
-    /// Byte offset of this MPDU's delimiter within its HT A-MPDU PSDU.
+    /// Integrity-checked EHT U-SIG. EHT-SIG and DATA are not implied.
+    EhtUsig {
+        fields: EhtUsigFields,
+        preamble_sample_index: u64,
+    },
+    /// Integrity-checked EHT-SIG for a non-OFDMA PPDU.
+    EhtSignal {
+        fields: EhtNonOfdmaSignal,
+        preamble_sample_index: u64,
+    },
+    /// Integrity-checked EHT-SIG for a 20 MHz downlink OFDMA PPDU.
+    EhtOfdmaSignal {
+        fields: EhtOfdmaSignal,
+        preamble_sample_index: u64,
+    },
+    /// One independently recovered EHT OFDMA User field and its allocation.
+    EhtOfdmaUser {
+        user_index: usize,
+        resource: EhtResourceUnit,
+        preamble_sample_index: u64,
+    },
+    /// Trigger parameters used for one independently recovered EHT-TB RU.
+    EhtTbUser {
+        common: crate::protocols::link::Dot11EhtTriggerCommonFields,
+        user: crate::protocols::link::Dot11EhtTriggerUserFields,
+        resource: EhtResourceUnit,
+        user_index: usize,
+        trigger_preamble_sample_index: u64,
+        preamble_sample_index: u64,
+    },
+    /// Trigger parameters used for this RU. Matching is not BSS authentication.
+    HeTbUser {
+        common: crate::Dot11TriggerCommonFields,
+        /// Effective per-RU parameters; an RA range's RU byte is expanded.
+        user: crate::Dot11TriggerUserFields,
+        /// Position of the original User Info, shared by all RUs in an RA range.
+        user_index: usize,
+        trigger_preamble_sample_index: u64,
+        preamble_sample_index: u64,
+    },
+    /// Checked HE TB signaling only; DATA requires matching Trigger context.
+    HeTbSignal {
+        fields: HeTbSignalFields,
+        preamble_sample_index: u64,
+    },
+    /// Zero-based original User field position in the accompanying HeMuSigB.
+    /// Present on MU frames after per-user DATA recovery and MPDU FCS checks.
+    HeMuUser {
+        user_index: usize,
+        preamble_sample_index: u64,
+    },
+    /// Checked MU SIG-B fields, including independent per-user/block failures.
+    HeMuSigB {
+        fields: HeMuSigBFields,
+        preamble_sample_index: u64,
+    },
+    /// CRC-checked HE MU signaling, not proof of SIG-B or DATA integrity.
+    HeMuSignal {
+        fields: HeMuSignalFields,
+        preamble_sample_index: u64,
+    },
+    /// CRC-checked HE ER SU signaling. `bandwidth` selects 242/upper106 tones,
+    /// not a wider RF channel. This does not establish DATA or MAC integrity.
+    HeErSignal {
+        fields: HeSuSignalFields,
+        preamble_sample_index: u64,
+    },
+    /// CRC-checked HE SU signaling, not proof of DATA or MAC integrity.
+    HeSignal {
+        fields: HeSuSignalFields,
+        preamble_sample_index: u64,
+    },
+    /// Byte offset of this MPDU's delimiter within its HT/VHT/HE A-MPDU PSDU.
     /// Frame sample coordinates describe the entire containing PPDU.
+    /// Control bits preserve HT's low nibble or VHT/HE's EOF/Tag/reserved bits;
+    /// VHT high-length bits are not control flags.
     Ampdu {
         delimiter_offset: usize,
         control_bits: u8,
@@ -275,6 +374,16 @@ pub enum PhyDiagnostic {
     /// An integrity-checked HT header, not an integrity-checked MAC frame.
     HtSignal {
         fields: HtSignalFields,
+        preamble_sample_index: u64,
+    },
+    /// CRC-checked VHT-SIG-A, not proof of MAC or DATA integrity.
+    VhtSignalA {
+        fields: VhtSignalAFields,
+        preamble_sample_index: u64,
+    },
+    /// VHT-SIG-B whose CRC has been verified against descrambled DATA SERVICE.
+    VhtSignalB {
+        fields: VhtSignalB20Fields,
         preamble_sample_index: u64,
     },
     Reset(ResetReason),
@@ -327,6 +436,142 @@ impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (
+                Self::EhtUsig {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::EhtUsig {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::EhtSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::EhtSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::EhtOfdmaSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::EhtOfdmaSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::EhtOfdmaUser {
+                    user_index: a,
+                    resource: b,
+                    preamble_sample_index: c,
+                },
+                Self::EhtOfdmaUser {
+                    user_index: d,
+                    resource: e,
+                    preamble_sample_index: f,
+                },
+            ) => a == d && b == e && c == f,
+            (
+                Self::EhtTbUser {
+                    common: a,
+                    user: b,
+                    resource: c,
+                    user_index: d,
+                    trigger_preamble_sample_index: e,
+                    preamble_sample_index: f,
+                },
+                Self::EhtTbUser {
+                    common: g,
+                    user: h,
+                    resource: i,
+                    user_index: j,
+                    trigger_preamble_sample_index: k,
+                    preamble_sample_index: l,
+                },
+            ) => a == g && b == h && c == i && d == j && e == k && f == l,
+            (
+                Self::HeTbUser {
+                    common: a,
+                    user: b,
+                    user_index: c,
+                    trigger_preamble_sample_index: d,
+                    preamble_sample_index: e,
+                },
+                Self::HeTbUser {
+                    common: f,
+                    user: g,
+                    user_index: h,
+                    trigger_preamble_sample_index: i,
+                    preamble_sample_index: j,
+                },
+            ) => a == f && b == g && c == h && d == i && e == j,
+            (
+                Self::HeTbSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeTbSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::HeMuUser {
+                    user_index: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeMuUser {
+                    user_index: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::HeMuSigB {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeMuSigB {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::HeMuSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeMuSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::HeErSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeErSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::HeSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
                 Self::LdpcPartial {
                     failed_codewords: a,
                 },
@@ -342,6 +587,26 @@ impl PartialEq for PhyDiagnostic {
                 Self::Ampdu {
                     delimiter_offset: c,
                     control_bits: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::VhtSignalA {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::VhtSignalA {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::VhtSignalB {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::VhtSignalB {
+                    fields: c,
+                    preamble_sample_index: d,
                 },
             ) => a == c && b == d,
             (

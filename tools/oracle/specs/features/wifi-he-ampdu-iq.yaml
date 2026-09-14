@@ -1,0 +1,23 @@
+version: 1
+kind: feature
+name: wifi_he_ampdu_iq
+summary: Complete HE20 SU BCC IQ to integrity-checked aggregate frame bytes.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: iq-through-mac
+    source: IEEE 802.11ax-2021 27.3.12, 9.7.1 and 26.6.2
+    checks: [independent_preamble_acquisition, header_admission, all_bcc_mcs, all_su_training_guards, exact_psdu, single_mpdu, multiple_mpdus, tagged_mpdus, eof_padding, bad_fcs_recovery, exact_frame_offsets]
+  - name: streaming
+    checks: [public_wifi_decoder, chunk_boundaries, typed_he_metadata, bounded_reservations, legacy_only_unchanged, no_invalid_fcs_publication]
+coverage_cases: [wifi-he-bcc-ampdu-iq]
+supported_cases:
+  - {name: wifi-he-bcc-ampdu-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - These cases qualify public HE20 SU single-stream BCC without DCM, STBC or midambles. Separate wifi_he_ldpc_iq cases qualify LDPC. Offline fixtures are not live hardware qualification.
+      - Tagged QoS frame bytes exercise framing semantics, not negotiated acknowledgment policy.

@@ -138,13 +138,9 @@ fn dot11_header_length_management_family_includes_selected_fixed_fields() {
 
 #[test]
 fn dot11_header_length_control_family_uses_subtype_address_layouts() {
-    let one_address = [
-        DOT11_CONTROL_SUBTYPE_CTS,
-        DOT11_CONTROL_SUBTYPE_ACK,
-        0,
-        DOT11_CONTROL_SUBTYPE_TRIGGER,
-    ];
+    let one_address = [DOT11_CONTROL_SUBTYPE_CTS, DOT11_CONTROL_SUBTYPE_ACK, 0];
     let two_address = [
+        DOT11_CONTROL_SUBTYPE_TRIGGER,
         DOT11_CONTROL_SUBTYPE_BLOCK_ACK_REQUEST,
         DOT11_CONTROL_SUBTYPE_BLOCK_ACK,
         DOT11_CONTROL_SUBTYPE_RTS,

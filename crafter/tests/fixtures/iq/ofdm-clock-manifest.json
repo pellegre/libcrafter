@@ -3,8 +3,8 @@
   "sample_rate_hz": 20000000,
   "format": "cs8",
   "interpolation": "16-tap normalized Hann-windowed sinc, cutoff 0.475",
-  "generator_sha256": "83b9fbe07f676b3ebb472528a7ca08d4ab50f30f2c4984b0cebd392b6ca42869",
-  "encoder_sha256": "ef50ea2b54a77cbd8d9d07e5987e6173dc4b1473cfb7f7893ec039709c813f45",
+  "generator_sha256": "062bbb8c6e07ec223300fc131be286d59026b8d47df7241ce3c64250af313488",
+  "encoder_sha256": "97b70a1669ffb369925c728b629291f665c0622a7d663c8e257986a19479e92c",
   "fixtures": [
     {
       "name": "ofdm-clock-6-clean--20ppm",

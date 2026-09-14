@@ -503,6 +503,14 @@ fn dot11_control_frames_encode_decode_supported_address_layouts() {
     let ta = dot11_role_mac(2);
     let cases = [
         (
+            Dot11::control(Dot11ControlSubtype::Trigger)
+                .addr1(ra)
+                .addr2(ta),
+            Dot11ControlSubtype::Trigger,
+            DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            true,
+        ),
+        (
             Dot11::ack().addr1(ra),
             Dot11ControlSubtype::Ack,
             DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
@@ -579,8 +587,7 @@ fn dot11_control_frames_encode_decode_supported_address_layouts() {
 
 #[test]
 fn dot11_control_frames_preserve_unsupported_subtypes_as_raw_tail() {
-    let frame_control =
-        dot11_test_frame_control(DOT11_FRAME_TYPE_CONTROL, DOT11_CONTROL_SUBTYPE_TRIGGER);
+    let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_CONTROL, 0);
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&frame_control.compile());
     bytes.extend_from_slice(&0x0102u16.to_le_bytes());
@@ -592,7 +599,10 @@ fn dot11_control_frames_preserve_unsupported_subtypes_as_raw_tail() {
     let raw = decoded.layer::<Raw>().unwrap();
 
     assert_eq!(dot11.frame_type(), Dot11FrameType::Control);
-    assert_eq!(dot11.control_subtype(), Some(Dot11ControlSubtype::Trigger));
+    assert_eq!(
+        dot11.control_subtype(),
+        Some(Dot11ControlSubtype::Unknown(0))
+    );
     assert_eq!(dot11.addr1_value(), Some(dot11_role_mac(1)));
     assert_eq!(dot11.addr2_value(), None);
     assert_eq!(raw.as_bytes(), b"unsupported-control-body");
@@ -602,6 +612,10 @@ fn dot11_control_frames_preserve_unsupported_subtypes_as_raw_tail() {
 #[test]
 fn dot11_control_frames_truncated_supported_layouts_return_structured_errors() {
     let cases = [
+        (
+            DOT11_CONTROL_SUBTYPE_TRIGGER,
+            DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+        ),
         (
             DOT11_CONTROL_SUBTYPE_ACK,
             DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
@@ -650,6 +664,64 @@ fn dot11_control_frames_truncated_supported_layouts_return_structured_errors() {
             CrafterError::buffer_too_short("dot11.header", required, available),
             "control subtype {subtype}"
         );
+    }
+}
+
+#[test]
+fn dot11_trigger_header_preserves_body_and_rejects_short_transmitter() {
+    // IEEE802.11ax-2021 Figure9-64a: FC/Duration/RA/TA, then Common Info.
+    let wire = [
+        0x24, 0, 0x34, 0x12, 0, 0, 0x5e, 0, 0x53, 1, 0, 0, 0x5e, 0, 0x53, 2, 0xd0, 0x12, 0, 0, 0,
+        0, 0xc0, 0x7f, 0xff, 0xff,
+    ];
+    let packet = Packet::decode_from_link(LinkType::Ieee80211, wire).unwrap();
+    let layer = packet.layer::<Dot11>().unwrap();
+    assert_eq!(layer.encoded_len(), 16);
+    assert_eq!(layer.receiver(), layer.addr1_value());
+    assert_eq!(layer.transmitter(), layer.addr2_value());
+    assert_eq!(
+        layer.addr2_value().unwrap().octets(),
+        [0, 0, 0x5e, 0, 0x53, 2]
+    );
+    let trigger = packet.layer::<Dot11Trigger>().unwrap();
+    assert_eq!(trigger.common.ul_length, 301);
+    assert_eq!(
+        trigger.remainder,
+        Dot11TriggerRemainder::Padding(vec![255, 255])
+    );
+    assert_eq!(packet.compile().unwrap().as_bytes(), &wire);
+    assert!(layer.bssid().is_none());
+    assert!(layer.sequence_control_value().is_none());
+    for available in 2..16 {
+        assert_eq!(
+            Packet::decode_from_link(LinkType::Ieee80211, &wire[..available]).unwrap_err(),
+            CrafterError::buffer_too_short("dot11.header", 16, available)
+        );
+    }
+}
+
+#[test]
+fn dot11_trigger_radiotap_fcs_is_not_a_scheduled_user() {
+    // A nine-octet radiotap header with only Flags present. Failed-FCS is
+    // metadata, not permission to reinterpret the trailer as scheduling data.
+    for flags in [0x10, 0x50] {
+        let mut wire = vec![0, 0, 9, 0, 2, 0, 0, 0, flags];
+        wire.extend([
+            0x24, 0, 0, 0, 0, 0, 0x5e, 0, 0x53, 1, 0, 0, 0x5e, 0, 0x53, 2,
+        ]);
+        wire.extend([0xd0, 0x12, 0, 0, 0, 0, 0xc0, 0x7f]);
+        wire.extend([1, 0, 0, 0, 0, 0xa5]);
+        wire.extend([2, 0, 0, 0]);
+        let packet = Packet::decode_from_link(LinkType::Radiotap, &wire).unwrap();
+        let trigger = packet.layer::<Dot11Trigger>().unwrap();
+        assert_eq!(trigger.users.len(), 1);
+        assert_eq!(trigger.users[0].fields.aid12, 1);
+        assert_eq!(packet.layer::<Raw>().unwrap().as_bytes(), &[2, 0, 0, 0]);
+        assert_eq!(packet.compile().unwrap().as_bytes(), wire);
+        // Without explicit FCS framing, four bytes are a truncated user, not
+        // a trailer guessed from their position or contents.
+        wire[8] = 0;
+        assert!(Packet::decode_from_link(LinkType::Radiotap, &wire).is_err());
     }
 }
 

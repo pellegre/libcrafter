@@ -1,0 +1,21 @@
+version: 1
+kind: feature
+name: wifi_he_tb_prefix
+summary: Checked HE20 TB preamble recognition without inferred Trigger parameters.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: tb-prefix-recognition
+    source: IEEE 802.11ax-2021 27.3.11 and 27.3.22
+    checks: [independent_iq, repeated_lsig, format_crc_tail, finite_bounds, chunk_invariance, no_data_publication]
+coverage_cases: [wifi-he-tb-prefix]
+supported_cases:
+  - {name: wifi-he-tb-prefix, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Recognizes HE20 TB signaling only. No Trigger context, DATA recovery or live qualification.
+      - Independent prefix fixtures use uniform preamble attenuation; simultaneous transmitters and per-user clock errors are not qualified here.

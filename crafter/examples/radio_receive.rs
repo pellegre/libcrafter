@@ -234,6 +234,8 @@ impl PhyDecoder for ObservedDecoder {
             for diagnostic in &decoded.diagnostics {
                 if let Some(value) =
                     ht_signal_record_with_context(diagnostic, epoch, &decoded.diagnostics)
+                        .or_else(|| vht_signal_record(diagnostic, epoch))
+                        .or_else(|| he_signal_record(diagnostic, epoch))
                 {
                     emit(&self.out, value)?;
                 }
@@ -241,10 +243,15 @@ impl PhyDecoder for ObservedDecoder {
         }
         for f in &decoded.frames {
             self.ordinal += 1;
-            emit(
-                &self.out,
-                json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":frame_phy(f),"ht":ht_metadata(f),"ampdu":ampdu_metadata(f),"preamble":f.diagnostics.iter().find_map(|d| match d { PhyDiagnostic::Dsss { short_preamble, .. } => Some(if *short_preamble { "short" } else { "long" }), _ => None }),"rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()}),
-            )?;
+            let mut record = json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":frame_phy(f),"ht":ht_metadata(f),"ampdu":ampdu_metadata(f),"preamble":f.diagnostics.iter().find_map(|d| match d { PhyDiagnostic::Dsss { short_preamble, .. } => Some(if *short_preamble { "short" } else { "long" }), _ => None }),"rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()});
+            // Do not add a null field to every existing legacy/HT artifact.
+            if let Some(metadata) = vht_metadata(f) {
+                record["vht"] = metadata;
+            }
+            if let Some(metadata) = he_metadata(f) {
+                record["he"] = metadata;
+            }
+            emit(&self.out, record)?;
         }
         if let Some(end) = terminal {
             emit(
@@ -257,6 +264,157 @@ impl PhyDecoder for ObservedDecoder {
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
         self.inner.reset(reason)
     }
+}
+fn he_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
+    if let PhyDiagnostic::HeTbSignal {
+        fields,
+        preamble_sample_index,
+    } = diagnostic
+    {
+        return Some(json!({"kind":"he_signal", "phy":"he", "epoch":epoch,
+            "preamble_sample_index":preamble_sample_index,
+            "mac_integrity":"not_established_by_header",
+            "he":he_tb_signal_metadata(fields,*preamble_sample_index)}));
+    }
+    if let PhyDiagnostic::HeMuSigB {
+        fields,
+        preamble_sample_index,
+    } = diagnostic
+    {
+        return Some(json!({"kind":"he_sig_b","phy":"he","epoch":epoch,
+            "preamble_sample_index":preamble_sample_index,"mac_integrity":"not_established_by_header",
+            "he":he_sig_b_metadata(fields,*preamble_sample_index)}));
+    }
+    if let PhyDiagnostic::HeMuSignal {
+        fields,
+        preamble_sample_index,
+    } = diagnostic
+    {
+        return Some(json!({"kind":"he_signal", "phy":"he", "epoch":epoch,
+            "preamble_sample_index":preamble_sample_index,
+            "mac_integrity":"not_established_by_header",
+            "he":he_mu_signal_metadata(fields, *preamble_sample_index)}));
+    }
+    if let PhyDiagnostic::HeErSignal {
+        fields,
+        preamble_sample_index,
+    } = diagnostic
+    {
+        let metadata = he_er_signal_metadata(fields, *preamble_sample_index);
+        return Some(
+            json!({"kind":"he_signal","phy":"he","epoch":epoch,"preamble_sample_index":preamble_sample_index,"he":metadata}),
+        );
+    }
+    let PhyDiagnostic::HeSignal {
+        fields,
+        preamble_sample_index,
+    } = diagnostic
+    else {
+        return None;
+    };
+    Some(
+        json!({"kind":"he_signal", "phy":"he", "epoch":epoch, "preamble_sample_index":preamble_sample_index,
+        "he":he_signal_metadata(fields,*preamble_sample_index)}),
+    )
+}
+
+#[cfg(test)]
+#[test]
+fn radio_he_sig_b_artifact_metadata() {
+    for (name, users, errors, symbols) in [
+        ("he-sigb-iq-m0-d1-a191-u0-i0-none-e0", 17, 0, 36),
+        ("he-sigb-iq-m0-d0-a0-u0-i1-user-crc-e0", 9, 2, 10),
+        ("he-sigb-iq-m5-d0-a-1-u8-i1-none-e0", 8, 0, 1),
+    ] {
+        let bytes = std::fs::read(format!(
+            "{}/tests/fixtures/iq/{name}.cs8",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_412_000_000,
+            max_chunk_samples: 10000,
+            max_buffer_samples: 120000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 4,
+            max_capture_samples: 100000,
+            max_duration: Duration::from_secs(1),
+        };
+        let chunk = IqChunk::new(
+            config,
+            IqPosition {
+                epoch: 7,
+                sequence: 0,
+                sample_index: 0,
+                time_anchor: None,
+                discontinuity: None,
+            },
+            bytes.iter().map(|b| *b as i8).collect(),
+        )
+        .unwrap();
+        let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+        assert!(out.frames.is_empty());
+        let records: Vec<_> = out
+            .diagnostics
+            .iter()
+            .filter_map(|d| he_signal_record(d, 7))
+            .filter(|r| r["kind"] == "he_sig_b")
+            .collect();
+        assert_eq!(records.len(), 1, "{name}");
+        let record = &records[0];
+        assert_eq!(record["epoch"], 7);
+        assert_eq!(record["preamble_sample_index"], 37);
+        assert_eq!(record["mac_integrity"], "not_established_by_header");
+        assert_eq!(record["he"]["sig_b_symbols"], symbols);
+        assert_eq!(record["he"]["sig_b_end_sample_index"], bytes.len() / 2);
+        let results = record["he"]["users"].as_array().unwrap();
+        assert_eq!(results.len(), users);
+        assert_eq!(
+            results.iter().filter(|r| r["status"] == "error").count(),
+            errors
+        );
+        for (i, r) in results.iter().enumerate().skip(errors) {
+            assert_eq!(r["sta_id"], 37 + i);
+            assert_eq!(r["mcs"], i % 12);
+        }
+        assert!(record["he"].get("mcs").is_none());
+    }
+}
+fn vht_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
+    let PhyDiagnostic::VhtSignalA {
+        fields: f,
+        preamble_sample_index,
+    } = diagnostic
+    else {
+        return None;
+    };
+    let users = match f.users {
+        VhtSignalAUsers::Single {
+            space_time_streams,
+            partial_aid,
+            mcs,
+            ldpc,
+            beamformed,
+        } => {
+            json!({"mode":"su", "space_time_streams":space_time_streams, "partial_aid":partial_aid, "mcs":mcs, "ldpc":ldpc, "beamformed":beamformed})
+        }
+        VhtSignalAUsers::Multi {
+            space_time_streams,
+            ldpc,
+        } => json!({"mode":"mu", "space_time_streams":space_time_streams, "ldpc":ldpc}),
+    };
+    Some(json!({
+        "kind":"vht_signal_a", "epoch":epoch,
+        "preamble_sample_index":preamble_sample_index,
+        "signal_a":{
+            "bandwidth_code":f.bandwidth_code, "group_id":f.group_id, "stbc":f.stbc,
+            "short_guard_interval":f.short_guard_interval, "short_gi_disambiguation":f.short_gi_disambiguation,
+            "ldpc_extra_symbol":f.ldpc_extra_symbol, "txop_ps_not_allowed":f.txop_ps_not_allowed,
+            "users":users,
+        },
+        "mac_integrity":"not_established_by_header",
+    }))
 }
 fn ht_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
     match diagnostic {
@@ -659,7 +817,7 @@ fn main() -> Result<()> {
         center_frequency_hz: 2_412_000_000,
         max_chunk_samples: chunk_samples,
         max_buffer_samples: buffer_samples,
-        max_frame_bytes: 4095,
+        max_frame_bytes: if modern { 16383 } else { 4095 },
         // Coarse window workers can finish together at stream end, so their
         // bounded aggregate needs more room than a serial decoder response.
         max_pending_frames: if modern {
@@ -908,6 +1066,430 @@ mod tests {
         }
     }
 
+    #[test]
+    fn radio_he_frame_artifact_metadata() {
+        let bytes = include_bytes!("../tests/fixtures/iq/he-ampdu-iq-mcs9-ltf4-gi3200-single.cs8");
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_412_000_000,
+            max_chunk_samples: 10_000,
+            max_buffer_samples: 120_000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 4,
+            max_capture_samples: 100_000,
+            max_duration: Duration::from_secs(1),
+        };
+        let chunk = IqChunk::new(
+            config,
+            IqPosition {
+                epoch: 7,
+                sequence: 0,
+                sample_index: 0,
+                time_anchor: None,
+                discontinuity: None,
+            },
+            bytes.iter().map(|b| *b as i8).collect(),
+        )
+        .unwrap();
+        let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+        assert_eq!(out.frames.len(), 1);
+        let frame = &out.frames[0];
+        assert_eq!(frame_phy(frame), "he");
+        let metadata = he_metadata(frame).unwrap();
+        assert_eq!(metadata["mcs"], 9);
+        assert_eq!(metadata["guard_interval_ns"], 3200);
+        assert_eq!(metadata["coding"], "bcc");
+        assert_eq!(metadata["ltf_size"], 4);
+        assert!(ht_metadata(frame).is_none());
+        assert!(vht_metadata(frame).is_none());
+        assert!(out
+            .diagnostics
+            .iter()
+            .any(|d| he_signal_record(d, 7)
+                .is_some_and(|v| v["epoch"] == 7 && v["kind"] == "he_signal")));
+    }
+
+    #[test]
+    fn radio_he_mu_frame_artifact_metadata() {
+        for (bytes, stbc) in [
+            (
+                include_bytes!("../tests/fixtures/iq/he-mu-ampdu-a0-m4-l1-d0-clean.cs8").as_slice(),
+                false,
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/iq/he-mu-stbc-a0-m4-l1-ltf4-g16-n2-p0-c0-flat.cs8"
+                )
+                .as_slice(),
+                true,
+            ),
+        ] {
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: 120000,
+                max_buffer_samples: 120000,
+                max_frame_bytes: 4095,
+                max_pending_frames: 32,
+                max_capture_samples: 120000,
+                max_duration: Duration::from_secs(1),
+            };
+            let chunk = IqChunk::new(
+                config,
+                IqPosition {
+                    epoch: 7,
+                    sequence: 0,
+                    sample_index: 0,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                bytes.iter().map(|b| *b as i8).collect(),
+            )
+            .unwrap();
+            let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+            assert_eq!(out.frames.len(), 18);
+            for (n, frame) in out.frames.iter().enumerate() {
+                assert_eq!(frame_phy(frame), "he");
+                let metadata = he_metadata(frame).unwrap();
+                assert_eq!(metadata["format"], "mu");
+                assert_eq!(metadata["user_index"], n / 2);
+                assert_eq!(metadata["user"]["sta_id"], 37 + n / 2);
+                assert_eq!(metadata["user"]["mcs"], 4);
+                assert_eq!(metadata["user"]["coding"], "ldpc");
+                assert_eq!(metadata["stbc"], stbc);
+                assert_eq!(
+                    metadata["user"]["space_time_streams"],
+                    if stbc { 2 } else { 1 }
+                );
+                assert!(ampdu_metadata(frame).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn radio_he_tb_header_artifact_metadata() {
+        for row in include_str!("../tests/fixtures/iq/he-tb-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
+            let fields = HeTbSignalFields::decode(&bits).unwrap();
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: 1000,
+                max_buffer_samples: 1024,
+                max_frame_bytes: 4095,
+                max_pending_frames: 4,
+                max_capture_samples: 1000,
+                max_duration: Duration::from_secs(1),
+            };
+            let chunk = IqChunk::new(
+                config,
+                IqPosition {
+                    epoch: 7,
+                    sequence: 0,
+                    sample_index: 0,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                bytes.iter().map(|b| *b as i8).collect(),
+            )
+            .unwrap();
+            let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+            assert!(out.frames.is_empty());
+            let headers: Vec<_> = out
+                .diagnostics
+                .iter()
+                .filter_map(|d| he_signal_record(d, 7))
+                .collect();
+            assert_eq!(headers.len(), 1, "{}", c[0]);
+            assert_eq!(headers[0]["he"], he_tb_signal_metadata(&fields, 37));
+            assert_eq!(headers[0]["epoch"], 7);
+            assert_eq!(headers[0]["mac_integrity"], "not_established_by_header");
+            for absent in ["mcs", "coding", "ru_tones", "ltf_size", "stbc"] {
+                assert!(headers[0]["he"].get(absent).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn radio_he_tb_frame_artifact_metadata() {
+        let bytes = include_bytes!("../tests/fixtures/iq/he-tb-exchange-004-clean.cs8");
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_412_000_000,
+            max_chunk_samples: bytes.len() / 2,
+            max_buffer_samples: 120_000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 64,
+            max_capture_samples: bytes.len() as u64 / 2,
+            max_duration: Duration::from_secs(1),
+        };
+        let chunk = IqChunk::new(
+            config,
+            IqPosition {
+                epoch: 7,
+                sequence: 0,
+                sample_index: 0,
+                time_anchor: None,
+                discontinuity: None,
+            },
+            bytes.iter().map(|b| *b as i8).collect(),
+        )
+        .unwrap();
+        let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+        assert_eq!(out.frames.len(), 3);
+        assert_eq!(frame_phy(&out.frames[0]), "legacy_ofdm");
+        assert!(he_metadata(&out.frames[0]).is_none());
+        for frame in &out.frames[1..] {
+            assert_eq!(frame_phy(frame), "he");
+            assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+            let metadata = he_metadata(frame).unwrap();
+            assert_eq!(metadata["format"], "tb");
+            assert_eq!(metadata["mcs"], 4);
+            assert_eq!(metadata["coding"], "bcc");
+            assert_eq!(metadata["stbc"], false);
+            assert_eq!(metadata["ru_allocation"], 0);
+            assert_eq!(metadata["aid12"], 1);
+            assert_eq!(metadata["trigger_preamble_sample_index"], 64);
+            assert_eq!(metadata["preamble_sample_index"], frame.start.sample_index);
+            let (common, user) = frame
+                .diagnostics
+                .iter()
+                .find_map(|d| match d {
+                    PhyDiagnostic::HeTbUser { common, user, .. } => Some((common, user)),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(metadata["trigger_common_bits"], common.bits());
+            assert_eq!(metadata["effective_user_bits"], user.bits());
+        }
+    }
+
+    #[test]
+    fn radio_he_mu_header_artifact_metadata() {
+        for row in include_str!("../tests/fixtures/iq/he-mu-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
+            let fields = HeMuSignalFields::decode(&bits).unwrap();
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: 1000,
+                max_buffer_samples: 1024,
+                max_frame_bytes: 4095,
+                max_pending_frames: 4,
+                max_capture_samples: 1000,
+                max_duration: Duration::from_secs(1),
+            };
+            let chunk = IqChunk::new(
+                config,
+                IqPosition {
+                    epoch: 7,
+                    sequence: 0,
+                    sample_index: 0,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                bytes.iter().map(|b| *b as i8).collect(),
+            )
+            .unwrap();
+            let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+            assert!(out.frames.is_empty());
+            let headers: Vec<_> = out
+                .diagnostics
+                .iter()
+                .filter_map(|d| he_signal_record(d, 7))
+                .collect();
+            assert_eq!(headers.len(), 1, "{}", c[0]);
+            let header = &headers[0];
+            assert_eq!(header["kind"], "he_signal");
+            assert_eq!(header["epoch"], 7);
+            assert_eq!(header["preamble_sample_index"], 37);
+            assert_eq!(header["mac_integrity"], "not_established_by_header");
+            assert_eq!(header["he"], he_mu_signal_metadata(&fields, 37));
+            assert_eq!(header["he"]["format"], "mu");
+            assert_eq!(
+                header["he"]["sig_b_symbols_or_users_raw"],
+                fields.sig_b_symbols_or_users
+            );
+            assert!(header["he"].get("mcs").is_none());
+            assert!(header["he"].get("coding").is_none());
+        }
+    }
+
+    #[test]
+    fn radio_he_er_header_artifact_metadata() {
+        for row in include_str!("../tests/fixtures/iq/he-er-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bits: Vec<_> = c[1].bytes().map(|v| v - b'0').collect();
+            let fields = HeSuSignalFields::decode_er(&bits).unwrap();
+            let d = PhyDiagnostic::HeErSignal {
+                fields,
+                preamble_sample_index: 37,
+            };
+            let header = he_signal_record(&d, 7).unwrap();
+            assert_eq!(header["kind"], "he_signal");
+            assert_eq!(header["phy"], "he");
+            assert_eq!(header["epoch"], 7);
+            assert_eq!(header["he"]["format"], "er_su");
+            assert_eq!(header["he"]["channel_width_mhz"], 20);
+            assert_eq!(
+                header["he"]["ru_tones"],
+                if fields.bandwidth == 0 { 242 } else { 106 }
+            );
+            assert_eq!(header["he"]["mcs"], fields.mcs);
+            assert_eq!(header["he"]["stbc"], fields.stbc);
+            assert_eq!(header["he"]["dcm"], fields.dcm);
+        }
+    }
+
+    #[test]
+    fn radio_he_er_frame_artifact_metadata() {
+        for row in include_str!("../tests/fixtures/iq/he-er-iq-index.tsv")
+            .lines()
+            .skip(1)
+            .chain(
+                include_str!("../tests/fixtures/iq/he-er106-iq-index.tsv")
+                    .lines()
+                    .skip(1),
+            )
+            .filter(|r| {
+                let name = r.split('\t').next().unwrap();
+                name.contains("-mcs0-") && name.ends_with("-ltf4-gi3200-pad3")
+            })
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: 100_000,
+                max_buffer_samples: 120_000,
+                max_frame_bytes: 4095,
+                max_pending_frames: 4,
+                max_capture_samples: 100_000,
+                max_duration: Duration::from_secs(1),
+            };
+            let chunk = IqChunk::new(
+                config,
+                IqPosition {
+                    epoch: 7,
+                    sequence: 0,
+                    sample_index: 0,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                bytes.iter().map(|v| *v as i8).collect(),
+            )
+            .unwrap();
+            let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+            assert_eq!(out.frames.len(), 2, "{}", c[0]);
+            for frame in &out.frames {
+                assert_eq!(frame_phy(frame), "he");
+                let metadata = he_metadata(frame).unwrap();
+                assert_eq!(metadata["format"], "er_su");
+                assert_eq!(
+                    metadata["ru_tones"],
+                    if c[0].starts_with("he-er106-") {
+                        106
+                    } else {
+                        242
+                    }
+                );
+                assert_eq!(metadata["channel_width_mhz"], 20);
+                assert_eq!(metadata["mcs"], 0);
+                assert_eq!(metadata["coding"], if c[2] == "1" { "ldpc" } else { "bcc" });
+                assert_eq!(metadata["dcm"], c[11] == "1");
+                assert_eq!(metadata["stbc"], c[12] == "1");
+                assert_eq!(metadata["midamble_period"], 10);
+                assert!(ht_metadata(frame).is_none());
+                assert!(vht_metadata(frame).is_none());
+                assert!(out
+                    .diagnostics
+                    .iter()
+                    .filter_map(|d| he_signal_record(d, 7))
+                    .any(|header| header["he"] == metadata));
+            }
+        }
+    }
+    #[test]
+    fn radio_vht_frame_artifact_metadata() {
+        let bytes = include_bytes!("../tests/fixtures/iq/vht-bcc-8-gi400-case0-clean.cs8");
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 5_180_000_000,
+            max_chunk_samples: 10_000,
+            max_buffer_samples: 120_000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 4,
+            max_capture_samples: 100_000,
+            max_duration: Duration::from_secs(1),
+        };
+        let chunk = IqChunk::new(
+            config,
+            IqPosition {
+                epoch: 7,
+                sequence: 0,
+                sample_index: 0,
+                time_anchor: None,
+                discontinuity: None,
+            },
+            bytes.iter().map(|b| *b as i8).collect(),
+        )
+        .unwrap();
+        let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+        assert_eq!(out.frames.len(), 1);
+        let frame = &out.frames[0];
+        assert_eq!(frame_phy(frame), "vht");
+        assert!(ht_metadata(frame).is_none());
+        let metadata = vht_metadata(frame).unwrap();
+        assert_eq!(metadata["mcs"], 8);
+        assert_eq!(metadata["coding"], "bcc");
+        assert_eq!(metadata["bandwidth_code"], 0);
+        assert_eq!(metadata["space_time_streams"], 1);
+        assert_eq!(metadata["guard_interval_ns"], 400);
+        assert_eq!(metadata["preamble_sample_index"], 37);
+        assert_eq!(metadata["service_crc_verified"], true);
+        assert_eq!(ampdu_metadata(frame).unwrap()["control_bits"], 1);
+        let headers: Vec<_> = out
+            .diagnostics
+            .iter()
+            .filter_map(|d| vht_signal_record(d, 7))
+            .collect();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0]["signal_a"]["users"]["mcs"], 8);
+        assert_eq!(headers[0]["mac_integrity"], "not_established_by_header");
+        assert_eq!(headers[0]["epoch"], 7);
+        let mut absent = frame.clone();
+        absent.diagnostics.clear();
+        assert!(vht_metadata(&absent).is_none());
+    }
     #[test]
     fn radio_iq_modern_replay_selection_preserves_explicit_intent() {
         assert_eq!(

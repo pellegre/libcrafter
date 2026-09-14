@@ -66,6 +66,7 @@ pub(crate) use self::ble::decode_ble_adv;
 use self::ble::decode_ble_radio;
 pub use self::ble::{AdList, AdStructure, BleAdvPduType, BleLlAdv, BlePhy, BleRadio};
 pub(crate) use self::dot11::decode_dot11_with_registry;
+pub(crate) use self::dot11::decode_dot11_with_registry_fcs;
 pub use self::dot11::*;
 pub(crate) use self::dot15d4::{
     decode_dot15d4, decode_dot15d4_radio, decode_zigbee_aps, decode_zigbee_nwk,
