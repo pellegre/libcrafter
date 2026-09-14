@@ -1,4 +1,4 @@
-"""Independent 20 MHz EHT-SIG IQ for non-OFDMA PPDUs.
+"""Independent 20 MHz EHT-SIG IQ for downlink EHT PPDUs.
 
 IEEE 802.11 TGbe 11-21/0140r2 and 11-21/1386r1. The forward model uses
 independent CRC, BCC, interleaving, constellation and direct-DFT synthesis.
@@ -12,12 +12,18 @@ import tempfile
 
 import ofdm_vectors as base
 import ht_bcc_vectors as ht
-from eht_sig_vectors import block, mu_blocks, repair as repair_sig
+from eht_sig_vectors import (
+    OFDMA_USERS,
+    block,
+    mu_blocks,
+    ofdma_blocks,
+    repair as repair_sig,
+)
 from eht_usig_vectors import mu_header, put
 from he_prefix_iq_vectors import symbol
 from he_sig_b_coded_vectors import encode
 from he_sig_b_modulation_vectors import modulate
-from he_signal_vectors import encoded
+from he_signal_vectors import checksum, encoded
 
 
 OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq"
@@ -132,6 +138,28 @@ def split_mu_blocks(bits, users):
     return blocks
 
 
+def split_ofdma_blocks(bits, users):
+    blocks = [bits[:36]]
+    cursor = 36
+    remaining = users
+    while remaining:
+        count = min(remaining, 2)
+        length = 22 * count + 10
+        blocks.append(bits[cursor:cursor + length])
+        cursor += length
+        remaining -= count
+    assert cursor == len(bits)
+    return blocks
+
+
+def repair_block(bits):
+    protected = len(bits) - 10
+    value = checksum(bits[:protected])
+    bits[protected:protected + 4] = [
+        (value >> shift) & 1 for shift in (3, 2, 1, 0)
+    ]
+
+
 def mu_waveform(case, users, raw_mcs, impaired=False, damage=None):
     bits, _, _ = mu_blocks(case, users)
     blocks = split_mu_blocks(bits, users)
@@ -175,6 +203,56 @@ def mu_waveform(case, users, raw_mcs, impaired=False, damage=None):
         base.quantize(samples, scale=180),
         "".join(map(str, usig)),
         "".join(map(str, bits)),
+        advertised_symbols,
+    )
+
+
+def ofdma_waveform(case, allocation, raw_mcs, impaired=False, damage=None):
+    users = OFDMA_USERS[allocation]
+    bits, common, _ = ofdma_blocks(case, allocation)
+    blocks = split_ofdma_blocks(bits, users)
+    _, _, dbps, _ = MODES[raw_mcs]
+    advertised_symbols = math.ceil(len(bits) / dbps)
+    bandwidth = 0
+    actual_mcs = raw_mcs
+    if damage == "crc":
+        blocks[-1][-10] ^= 1
+    elif damage == "tail":
+        blocks[-1][-1] = 1
+    elif damage == "allocation":
+        put(blocks[0], 17, 9, 26)
+        repair_block(blocks[0])
+    elif damage == "ltf":
+        put(blocks[0], 6, 3, 5)
+        repair_block(blocks[0])
+    elif damage == "symbol-count":
+        advertised_symbols += 1
+    elif damage == "bandwidth":
+        bandwidth = 1
+    elif damage == "wrong-modulation":
+        actual_mcs = (raw_mcs + 1) % 4
+    usig, _ = mu_header(case, bandwidth, 0, 0, raw_mcs, advertised_symbols)
+    samples = prefix(usig) + signaling(
+        blocks, raw_mcs, advertised_symbols, actual_mcs
+    )
+    if damage == "erased":
+        samples[-80 * advertised_symbols:] = [0j] * (80 * advertised_symbols)
+    if impaired:
+        samples = [
+            (value + (0.22j * samples[index - 3] if index >= 3 else 0))
+            * cmath.exp(1j * (0.55 + 0.014 * index))
+            for index, value in enumerate(samples)
+        ]
+    if damage == "truncated":
+        samples = samples[:-1]
+    assert all(max(abs(value.real), abs(value.imag)) * 180 < 127 for value in samples)
+    return (
+        base.quantize(samples, scale=180),
+        "".join(map(str, usig)),
+        "".join(map(str, bits)),
+        common[9],
+        common[10],
+        common[11],
         advertised_symbols,
     )
 
@@ -260,6 +338,57 @@ def generate(out):
     print(
         f"{len(rows) - 1} valid and {len(invalid) - 1} invalid "
         "independent MU-MIMO EHT-SIG IQ waveforms"
+    )
+
+    corpus = bytearray()
+    rows = [
+        "name\tusig\tbits\tallocation\tusers\tkind\tmcs\tsymbols\tend_sample\toffset\tbytes\tsha256"
+    ]
+    for raw_mcs in range(4):
+        for allocation in OFDMA_USERS:
+            seed = 8192 + 512 * raw_mcs + allocation
+            for impaired in (False, True):
+                suffix = "offset" if impaired else "clean"
+                name = f"eht-ofdma-sig-iq-m{raw_mcs}-a{allocation}-{suffix}"
+                iq, usig, bits, actual, users, kind, symbols = ofdma_waveform(
+                    seed, allocation, raw_mcs, impaired
+                )
+                offset = len(corpus)
+                corpus.extend(iq)
+                rows.append("\t".join(map(str, [
+                    name, usig, bits, actual, users, kind, raw_mcs, symbols,
+                    677 + 80 * symbols, offset, len(iq),
+                    hashlib.sha256(iq).hexdigest(),
+                ])))
+    invalid = ["name\treason\toffset\tbytes\tsha256"]
+    cases = [
+        (raw_mcs, damage)
+        for raw_mcs in range(4)
+        for damage in ("crc", "tail", "erased", "truncated")
+    ] + [
+        (0, damage)
+        for damage in (
+            "allocation", "ltf", "symbol-count", "bandwidth", "wrong-modulation"
+        )
+    ]
+    for case, (raw_mcs, damage) in enumerate(cases):
+        name = f"eht-ofdma-sig-iq-invalid-m{raw_mcs}-{damage}"
+        iq, _, _, _, _, _, _ = ofdma_waveform(
+            16384 + case, 65, raw_mcs, True, damage
+        )
+        offset = len(corpus)
+        corpus.extend(iq)
+        invalid.append("\t".join(map(str, [
+            name, damage, offset, len(iq), hashlib.sha256(iq).hexdigest(),
+        ])))
+    (out / "eht-ofdma-sig-iq-index.tsv").write_text("\n".join(rows) + "\n")
+    (out / "eht-ofdma-sig-iq-invalid-index.tsv").write_text(
+        "\n".join(invalid) + "\n"
+    )
+    (out / "eht-ofdma-sig-iq.cs8").write_bytes(corpus)
+    print(
+        f"{len(rows) - 1} valid and {len(invalid) - 1} invalid "
+        "independent OFDMA EHT-SIG IQ waveforms"
     )
 
 

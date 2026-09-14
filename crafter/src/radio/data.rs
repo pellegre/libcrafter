@@ -700,9 +700,19 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     if p.samples.len() == required {
                         match eht::SignalReceiver::recover(&p.samples, &p.acquisition) {
                             Ok(fields) => {
-                                out.diagnostics.push(PhyDiagnostic::EhtSignal {
-                                    fields: fields.signal,
-                                    preamble_sample_index: p.start.sample_index,
+                                out.diagnostics.push(match fields.signal {
+                                    eht::SignalFields::NonOfdma(fields) => {
+                                        PhyDiagnostic::EhtSignal {
+                                            fields,
+                                            preamble_sample_index: p.start.sample_index,
+                                        }
+                                    }
+                                    eht::SignalFields::Ofdma(fields) => {
+                                        PhyDiagnostic::EhtOfdmaSignal {
+                                            fields,
+                                            preamble_sample_index: p.start.sample_index,
+                                        }
+                                    }
                                 });
                                 out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
                             }

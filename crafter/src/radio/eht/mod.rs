@@ -7,7 +7,9 @@ mod sig;
 mod test_support;
 mod usig;
 
-pub(in crate::radio) use sig::iq::{Error as SignalIqError, Receiver as SignalReceiver};
+pub(in crate::radio) use sig::iq::{
+    Error as SignalIqError, Receiver as SignalReceiver, SignalFields,
+};
 pub use sig::{
     EhtLtfMode, EhtMuMimoUser, EhtNonMuUser, EhtNonOfdmaCommon, EhtNonOfdmaSignal,
     EhtNonOfdmaUsers, EhtOfdmaCommon, EhtOfdmaSignal, EhtOfdmaUser, EhtOfdmaUserKind,
