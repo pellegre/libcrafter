@@ -8,6 +8,7 @@ pub(in crate::radio) enum Error {
     InvalidCodedBits,
     VhtTiming,
     HeTiming,
+    EhtTiming,
     PayloadBitCount { required: usize, available: usize },
     Encoding(super::Error),
     Metrics(super::Error),
@@ -52,6 +53,43 @@ enum HeExtraPolicy {
     /// transmitter recommendation. Codeword recovery remains fully checked.
     Signaled,
 }
+
+#[derive(Clone, Copy)]
+struct SegmentCapacity {
+    rate_num: usize,
+    rate_den: usize,
+    coded_per_symbol: usize,
+    coded_short: usize,
+    coded_bits: usize,
+    data_bits: usize,
+}
+
+impl From<crate::radio::he::capacity::Capacity> for SegmentCapacity {
+    fn from(value: crate::radio::he::capacity::Capacity) -> Self {
+        Self {
+            rate_num: value.rate_num,
+            rate_den: value.rate_den,
+            coded_per_symbol: value.coded_per_symbol,
+            coded_short: value.coded_short,
+            coded_bits: value.coded_bits,
+            data_bits: value.data_bits,
+        }
+    }
+}
+
+impl From<crate::radio::eht::data::Capacity> for SegmentCapacity {
+    fn from(value: crate::radio::eht::data::Capacity) -> Self {
+        Self {
+            rate_num: value.rate_num,
+            rate_den: value.rate_den,
+            coded_per_symbol: value.coded_per_symbol,
+            coded_short: value.coded_short,
+            coded_bits: value.coded_bits,
+            data_bits: value.data_bits,
+        }
+    }
+}
+
 impl Layout {
     /// Encode the scrambled SERVICE and PSDU bits, then apply shortening,
     /// puncturing, and repetition in transmitted codeword order.
@@ -288,14 +326,15 @@ impl Layout {
         }
         let initial_c =
             Capacity::for_format(&initial, initial_symbols, er).map_err(|_| Error::HeTiming)?;
-        Self::he_capacities(
-            c,
-            initial_c,
+        Self::from_segment_capacities(
+            c.into(),
+            initial_c.into(),
             symbols,
             group,
             extra,
             initial.pre_fec_padding,
             HeExtraPolicy::Exact,
+            Error::HeTiming,
         )
     }
 
@@ -331,14 +370,15 @@ impl Layout {
         }
         let initial_c = Capacity::for_mu(&initial, user, ru_tones, initial_symbols)
             .map_err(|_| Error::HeTiming)?;
-        Self::he_capacities(
-            c,
-            initial_c,
+        Self::from_segment_capacities(
+            c.into(),
+            initial_c.into(),
             symbols,
             group,
             extra,
             initial.pre_fec_padding,
             HeExtraPolicy::Required,
+            Error::HeTiming,
         )
     }
 
@@ -374,9 +414,9 @@ impl Layout {
         }
         let initial_c =
             Capacity::for_tb(&initial, user, initial_symbols).map_err(|_| Error::HeTiming)?;
-        Self::he_capacities(
-            c,
-            initial_c,
+        Self::from_segment_capacities(
+            c.into(),
+            initial_c.into(),
             symbols,
             group,
             extra,
@@ -386,17 +426,70 @@ impl Layout {
                 initial.pre_fec_padding_raw
             },
             HeExtraPolicy::Signaled,
+            Error::HeTiming,
         )
     }
 
-    fn he_capacities(
-        c: crate::radio::he::capacity::Capacity,
-        initial_c: crate::radio::he::capacity::Capacity,
+    /// EHT20 single-user uses the HE-style pre/post-FEC segment boundary and
+    /// validates the signaled extra segment against the LDPC rate matcher.
+    pub(in crate::radio) fn eht(
+        fields: &crate::radio::eht::ReceivedSignal,
+        symbols: u16,
+    ) -> Result<Self, Error> {
+        use crate::radio::eht::{data::Capacity, EhtNonOfdmaUsers, SignalFields};
+
+        let symbols = usize::from(symbols);
+        if symbols == 0 || symbols > 400 {
+            return Err(Error::EhtTiming);
+        }
+        let c = Capacity::new(fields, symbols).map_err(|_| Error::EhtTiming)?;
+        if !c.ldpc || c.tail_bits != 0 {
+            return Err(Error::EhtTiming);
+        }
+        let mut initial = fields.clone();
+        let SignalFields::NonOfdma(signal) = &mut initial.signal else {
+            return Err(Error::EhtTiming);
+        };
+        let EhtNonOfdmaUsers::Single(user) = &signal.users else {
+            return Err(Error::EhtTiming);
+        };
+        if !user.ldpc {
+            return Err(Error::EhtTiming);
+        }
+        let extra = signal.common.ldpc_extra_symbol;
+        let mut initial_symbols = symbols;
+        if extra {
+            if signal.common.pre_fec_padding_factor == 1 {
+                signal.common.pre_fec_padding_factor = 4;
+                initial_symbols = symbols.checked_sub(1).ok_or(Error::EhtTiming)?;
+            } else {
+                signal.common.pre_fec_padding_factor -= 1;
+            }
+        }
+        signal.common.ldpc_extra_symbol = false;
+        let initial_padding = signal.common.pre_fec_padding_factor;
+        let initial_c = Capacity::new(&initial, initial_symbols).map_err(|_| Error::EhtTiming)?;
+        Self::from_segment_capacities(
+            c.into(),
+            initial_c.into(),
+            symbols,
+            1,
+            extra,
+            initial_padding,
+            HeExtraPolicy::Exact,
+            Error::EhtTiming,
+        )
+    }
+
+    fn from_segment_capacities(
+        c: SegmentCapacity,
+        initial_c: SegmentCapacity,
         symbols: usize,
         group: usize,
         extra: bool,
         initial_padding: u8,
         extra_policy: HeExtraPolicy,
+        timing_error: Error,
     ) -> Result<Self, Error> {
         let rate = match (c.rate_num, c.rate_den) {
             (1, 2) => Rate::Half,
@@ -419,7 +512,7 @@ impl Layout {
             HeExtraPolicy::Signaled => true,
         };
         if !admitted {
-            return Err(Error::HeTiming);
+            return Err(timing_error);
         }
         let short_cbps = c.coded_short;
         let expected = available
@@ -434,7 +527,7 @@ impl Layout {
                 0
             };
         if expected != c.coded_bits || payload != c.data_bits {
-            return Err(Error::HeTiming);
+            return Err(timing_error);
         }
         Ok(Self {
             symbols,

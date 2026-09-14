@@ -3,6 +3,7 @@
 mod bcc;
 mod capacity;
 mod iq;
+mod ldpc;
 mod receiver;
 mod scrambler;
 #[cfg(test)]
@@ -26,6 +27,7 @@ pub(in crate::radio) enum Error {
     FrameLimit,
     SampleLimit,
     Fec,
+    Ldpc(crate::radio::ldpc::rate::Error),
     Service,
     Truncated { required: usize, available: usize },
     Samples,

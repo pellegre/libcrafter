@@ -15,9 +15,12 @@ import ht_bcc_vectors as ht
 import he_training_vectors as training
 from eht_sig_vectors import (
     DATA_BCC_MODES,
+    DATA_MODES,
     OFDMA_USERS,
     block,
     data_bcc_case,
+    data_ldpc_case,
+    data_ldpc_layout,
     mu_blocks,
     ofdma_blocks,
     repair as repair_sig,
@@ -107,16 +110,35 @@ def data_interleave(bits, bits_per_tone, dcm):
     return output
 
 
-def data_symbol(bits, bits_per_tone, dcm, symbol_index, polarity, guard):
-    mapped = data_interleave(bits, bits_per_tone, dcm)
+def data_constellation(bits):
+    if len(bits) <= 8:
+        return constellation(bits)
+    width = len(bits) // 2
+    labels = {
+        format(index ^ (index >> 1), f"0{width}b"): value
+        for index, value in enumerate(range(-(2 ** width - 1), 2 ** width, 2))
+    }
+    label = "".join(map(str, bits))
+    energy = {10: 682, 12: 2730}[len(bits)]
+    return complex(labels[label[:width]], labels[label[width:]]) / math.sqrt(energy)
+
+
+def data_symbol(
+    bits, bits_per_tone, dcm, symbol_index, polarity, guard, ldpc=False
+):
+    mapped = bits if ldpc else data_interleave(bits, bits_per_tone, dcm)
     frequency = [0j] * 245
     tones = len(DATA_TONES) // (1 + int(dcm))
     for index in range(tones):
+        target = (
+            9 * (index % (tones // 9)) + index // (tones // 9)
+            if ldpc else index
+        )
         label = mapped[index * bits_per_tone:(index + 1) * bits_per_tone]
-        lower = constellation(label)
-        frequency[DATA_TONES[index] + 122] = lower
+        lower = data_constellation(label)
+        frequency[DATA_TONES[target] + 122] = lower
         if dcm:
-            frequency[DATA_TONES[index + tones] + 122] = lower * (
+            frequency[DATA_TONES[target + tones] + 122] = lower * (
                 -1 if (index + tones) % 2 else 1
             )
     for index, tone in enumerate(DATA_PILOTS):
@@ -206,6 +228,107 @@ def data_bcc_waveform(mcs, ltf_mode, padding, impaired):
         "".join(map(str, bits)),
         psdu.hex(),
         data_symbols,
+        legacy_length,
+        guard,
+        ltf_start,
+        data_start,
+        data_end,
+    )
+
+
+def data_ldpc_candidate(mcs, ltf_mode, initial_padding):
+    ltf_stride = [144, 160, 272, 320][ltf_mode]
+    data_stride = [272, 288, 272, 320][ltf_mode]
+    fixed = 320 + 160 + ltf_stride
+    for initial_symbols in range(1, 101):
+        sizing = data_ldpc_layout(mcs, initial_symbols, initial_padding)
+        psdu_bytes = (sizing[8] - 16) // 8
+        if (
+            psdu_bytes >= 60
+            and (fixed + sizing[0] * data_stride) % 80 == 0
+        ):
+            return initial_symbols
+    raise AssertionError((mcs, ltf_mode, initial_padding))
+
+
+def data_ldpc_waveform(mcs, ltf_mode, initial_padding, impaired):
+    signal_symbols = 2
+    initial_symbols = data_ldpc_candidate(mcs, ltf_mode, initial_padding)
+    values, _, _ = data_ldpc_case(mcs, initial_symbols, initial_padding)
+    symbols, padding, extra = values[3:6]
+    ltf_stride = [144, 160, 272, 320][ltf_mode]
+    rounded = 320 + 80 * signal_symbols + ltf_stride
+    rounded += symbols * [272, 288, 272, 320][ltf_mode]
+    assert rounded % 80 == 0
+    legacy_length = 3 * (rounded // 80 - 1)
+
+    case = 131072 + 4096 * mcs + 128 * ltf_mode + initial_padding
+    bits, _ = block(case)
+    for start, width, value in [
+        (0, 4, 0),
+        (4, 2, ltf_mode),
+        (6, 3, 0),
+        (9, 1, extra),
+        (10, 2, padding % 4),
+        (12, 1, 0),
+        (17, 3, 0),
+        (31, 4, mcs),
+        (35, 1, 0),
+        (36, 4, 0),
+        (40, 1, 0),
+        (41, 1, 1),
+    ]:
+        put(bits, start, width, value)
+    repair_sig(bits)
+    usig, _ = mu_header(case, 0, 0, 1, 0, signal_symbols)
+    samples = prefix(usig, legacy_length)
+    samples += signaling([bits], 0, signal_symbols)
+    _, guard, _, ltf_start, data_start = append_training(samples, ltf_mode, 0)
+
+    mpdu = base.frame(0)
+    psdu = bytearray(delimiter(len(mpdu)) + mpdu)
+    psdu += b"\xa5" * min(-len(psdu) % 4, values[17] - len(psdu))
+    while len(psdu) + 4 <= values[17]:
+        psdu += delimiter(0, 1)
+    psdu += b"\xa5" * (values[17] - len(psdu))
+    values, psdu, coded = data_ldpc_case(
+        mcs, initial_symbols, initial_padding, psdu
+    )
+    bits_per_tone = DATA_MODES[mcs][0]
+    coded_per_symbol = values[11]
+    pilot_bits = base.scramble([0] * (4 + signal_symbols + symbols), 127)
+    for symbol_index in range(symbols):
+        start = symbol_index * coded_per_symbol
+        samples += data_symbol(
+            coded[start:start + coded_per_symbol],
+            bits_per_tone,
+            mcs == 15,
+            symbol_index,
+            1 - 2 * pilot_bits[4 + signal_symbols + symbol_index],
+            guard,
+            True,
+        )
+    data_end = len(samples)
+    assert data_end == 37 + 400 + rounded
+
+    if impaired:
+        samples = [
+            (value + (0.18j * samples[index - 3] if index >= 3 else 0))
+            * cmath.exp(1j * (0.35 + 0.007 * index))
+            for index, value in enumerate(samples)
+        ]
+    peak = max(max(abs(value.real), abs(value.imag)) for value in samples)
+    gain = 125 / peak if bits_per_tone == 12 else min(180, 120 / peak)
+    assert all(max(abs(value.real), abs(value.imag)) * gain < 127 for value in samples)
+    return (
+        base.quantize(samples, scale=gain),
+        "".join(map(str, usig)),
+        "".join(map(str, bits)),
+        psdu.hex(),
+        initial_symbols,
+        symbols,
+        padding,
+        extra,
         legacy_length,
         guard,
         ltf_start,
@@ -462,6 +585,55 @@ def training_waveform(raw_mcs, ltf_mode, ltf_code, impaired):
     )
 
 
+def generate_data_ldpc_iq(out):
+    corpus = bytearray()
+    rows = [
+        "name\tusig\tbits\tmcs\tltf_mode\tguard\tinitial_symbols\tinitial_padding\tsymbols\tpadding\textra\tpsdu\tlegacy_length\tltf_start\tdata_start\tdata_end\timpaired\toffset\tbytes\tsha256"
+    ]
+    for mcs in DATA_MODES:
+        if mcs == 13:
+            continue
+        bits_per_tone = DATA_MODES[mcs][0]
+        for ltf_mode in range(4):
+            for initial_padding in range(1, 5):
+                for impaired in ((False,) if bits_per_tone == 12 else (False, True)):
+                    suffix = "offset" if impaired else "clean"
+                    name = (
+                        f"eht-data-ldpc-iq-m{mcs}-ltf{ltf_mode}-"
+                        f"pad{initial_padding}-{suffix}"
+                    )
+                    fields = data_ldpc_waveform(
+                        mcs, ltf_mode, initial_padding, impaired
+                    )
+                    (
+                        iq,
+                        usig,
+                        bits,
+                        psdu,
+                        initial_symbols,
+                        symbols,
+                        padding,
+                        extra,
+                        legacy_length,
+                        guard,
+                        ltf_start,
+                        data_start,
+                        data_end,
+                    ) = fields
+                    offset = len(corpus)
+                    corpus.extend(iq)
+                    rows.append("\t".join(map(str, [
+                        name, usig, bits, mcs, ltf_mode, guard,
+                        initial_symbols, initial_padding, symbols, padding,
+                        extra, psdu, legacy_length, ltf_start, data_start,
+                        data_end, int(impaired), offset, len(iq),
+                        hashlib.sha256(iq).hexdigest(),
+                    ])))
+    (out / "eht-data-ldpc-iq-index.tsv").write_text("\n".join(rows) + "\n")
+    (out / "eht-data-ldpc-iq.cs8").write_bytes(corpus)
+    print(f"{len(rows) - 1} independent EHT20 LDPC DATA IQ waveforms")
+
+
 def generate(out):
     base.self_check()
     corpus = bytearray()
@@ -661,6 +833,8 @@ def generate(out):
     (out / "eht-data-bcc-iq-index.tsv").write_text("\n".join(rows) + "\n")
     (out / "eht-data-bcc-iq.cs8").write_bytes(corpus)
     print(f"{len(rows) - 1} independent EHT20 BCC DATA IQ waveforms")
+
+    generate_data_ldpc_iq(out)
 
 
 if __name__ == "__main__":

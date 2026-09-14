@@ -1,4 +1,4 @@
-//! Legacy and opt-in HT/VHT/HE DATA receive paths plus EHT receive staging.
+//! Legacy and opt-in HT/VHT/HE/EHT DATA receive paths.
 //! Source map: docs/wifi-phy-evidence.json.
 use super::{
     signal::{decode_signal, TRELLIS_SIGNS},
@@ -385,25 +385,64 @@ impl LegacyOfdmDecoder {
         config: &RxConfig,
         out: &mut DecodeOutput,
     ) -> RadioResult<()> {
-        let recovered =
-            match eht::data::Receiver::recover(admission, &p.samples, &p.acquisition, usize::MAX) {
-                Ok(recovered) => recovered,
-                Err(error) => {
-                    self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
-                    out.diagnostics.push(match error {
-                        eht::data::Error::UnsupportedFormat
-                        | eht::data::Error::Modulation(_)
-                        | eht::data::Error::Coding
-                        | eht::data::Error::FrameLimit
-                        | eht::data::Error::SampleLimit => PhyDiagnostic::UnsupportedPhy,
-                        _ => PhyDiagnostic::InvalidHeader,
-                    });
-                    return Ok(());
-                }
-            };
+        let recovered = match eht::data::Receiver::recover_aggregate(
+            admission,
+            &p.samples,
+            &p.acquisition,
+            usize::MAX,
+        ) {
+            Ok(recovered) => recovered,
+            Err(error) => {
+                self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                out.diagnostics.push(match error {
+                    eht::data::Error::UnsupportedFormat
+                    | eht::data::Error::Modulation(_)
+                    | eht::data::Error::Coding
+                    | eht::data::Error::FrameLimit
+                    | eht::data::Error::SampleLimit => PhyDiagnostic::UnsupportedPhy,
+                    _ => PhyDiagnostic::InvalidHeader,
+                });
+                return Ok(());
+            }
+        };
         let eht::SignalFields::NonOfdma(fields) = &recovered.admission.trained.signal.signal else {
             unreachable!("EHT DATA admission excludes OFDMA")
         };
+        let mut diagnostics = vec![
+            PhyDiagnostic::Ofdm {
+                frequency_offset_hz: p.acquisition.frequency_rad * 20_000_000.
+                    / std::f32::consts::TAU,
+                training_correlation: p.acquisition.correlation,
+            },
+            PhyDiagnostic::EhtSignal {
+                fields: fields.clone(),
+                preamble_sample_index: p.start.sample_index,
+            },
+        ];
+        if recovered.failed_codewords != 0 {
+            let diagnostic = PhyDiagnostic::LdpcPartial {
+                failed_codewords: recovered.failed_codewords,
+            };
+            out.diagnostics.push(diagnostic.clone());
+            diagnostics.push(diagnostic);
+            if let Some(ldpc::rate::Error::Codeword {
+                index,
+                error:
+                    ldpc::Error::Nonconvergence {
+                        iterations,
+                        failed_checks,
+                    },
+            }) = recovered.first_failure
+            {
+                let diagnostic = PhyDiagnostic::LdpcNonconvergence {
+                    codeword: index,
+                    iterations,
+                    failed_checks,
+                };
+                out.diagnostics.push(diagnostic.clone());
+                diagnostics.push(diagnostic);
+            }
+        }
         let frame = RecoveredFrame {
             bytes: recovered.psdu,
             link_type: LinkType::Ieee80211,
@@ -412,17 +451,7 @@ impl LegacyOfdmDecoder {
             start: p.start.clone(),
             end_sample_index: recovered.admission.info.end_sample_index,
             rate_bps: recovered.admission.info.rate_bps,
-            diagnostics: vec![
-                PhyDiagnostic::Ofdm {
-                    frequency_offset_hz: p.acquisition.frequency_rad * 20_000_000.
-                        / std::f32::consts::TAU,
-                    training_correlation: p.acquisition.correlation,
-                },
-                PhyDiagnostic::EhtSignal {
-                    fields: fields.clone(),
-                    preamble_sample_index: p.start.sample_index,
-                },
-            ],
+            diagnostics,
         };
         self.publish_psdu(frame, Some(Aggregation::Eht), None, out)
     }
@@ -1492,6 +1521,18 @@ fn axis(label: usize, width: usize) -> f32 {
                                 - (2. * ((label >> 3) & 1) as f32 - 1.)
                                     * (3. - 2. * ((label >> 4) & 1) as f32))))
         }
+        // IEEE 802.11be 4096-QAM extends the same binary-reflected Gray axis.
+        6 => {
+            sign * (32.
+                - (2. * ((label >> 1) & 1) as f32 - 1.)
+                    * (16.
+                        - (2. * ((label >> 2) & 1) as f32 - 1.)
+                            * (8.
+                                - (2. * ((label >> 3) & 1) as f32 - 1.)
+                                    * (4.
+                                        - (2. * ((label >> 4) & 1) as f32 - 1.)
+                                            * (3. - 2. * ((label >> 5) & 1) as f32)))))
+        }
         _ => unreachable!("validated modulation width"),
     }
 }
@@ -1506,6 +1547,8 @@ fn constellation_energy(coded_bits: usize, carriers: usize) -> Result<f32, ()> {
         4 => Ok(10.),
         6 => Ok(42.),
         8 => Ok(170.),
+        10 => Ok(682.),
+        12 => Ok(2730.),
         _ => Err(()),
     }
 }
@@ -3337,10 +3380,18 @@ mod tests {
             }
         }
         for carriers in [48, 52] {
-            for coded in 0..=carriers * 10 {
-                let expected = [(1, 1.), (2, 2.), (4, 10.), (6, 42.), (8, 170.)]
-                    .into_iter()
-                    .find_map(|(bits, energy)| (coded == carriers * bits).then_some(energy));
+            for coded in 0..=carriers * 12 {
+                let expected = [
+                    (1, 1.),
+                    (2, 2.),
+                    (4, 10.),
+                    (6, 42.),
+                    (8, 170.),
+                    (10, 682.),
+                    (12, 2730.),
+                ]
+                .into_iter()
+                .find_map(|(bits, energy)| (coded == carriers * bits).then_some(energy));
                 assert_eq!(constellation_energy(coded, carriers).ok(), expected);
             }
             assert!(constellation_energy(usize::MAX, carriers).is_err());

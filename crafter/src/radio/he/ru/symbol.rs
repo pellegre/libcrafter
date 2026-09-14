@@ -63,7 +63,10 @@ pub(in crate::radio) struct Demodulator {
 
 impl Demodulator {
     pub fn new(tones: Tones, bits: usize, ldpc: bool, dcm: bool) -> Option<Self> {
-        if !matches!(bits, 1 | 2 | 4 | 6 | 8 | 10) || (!ldpc && bits == 10) || (dcm && bits > 4) {
+        if !matches!(bits, 1 | 2 | 4 | 6 | 8 | 10 | 12)
+            || (!ldpc && bits >= 10)
+            || (dcm && bits > 4)
+        {
             return None;
         }
         Some(Self {
@@ -96,6 +99,7 @@ impl Demodulator {
             6 => 42.,
             8 => 170.,
             10 => 682.,
+            12 => 2730.,
             _ => return None,
         };
         result.pilot_quality = Some((quantization_noise, energy));
@@ -308,7 +312,8 @@ impl Demodulator {
             4 => 10.,
             6 => 42.,
             8 => 170.,
-            _ => 682.,
+            10 => 682.,
+            _ => 2730.,
         };
         for k in 0..count {
             let tone = if self.ldpc {

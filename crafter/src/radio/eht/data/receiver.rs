@@ -13,6 +13,8 @@ pub(in crate::radio) struct Admission {
 pub(in crate::radio) struct Recovered {
     pub admission: Admission,
     pub psdu: Vec<u8>,
+    pub failed_codewords: usize,
+    pub first_failure: Option<crate::radio::ldpc::rate::Error>,
 }
 
 /// Admit checked and trained EHT20 signaling into the bounded DATA receiver.
@@ -86,25 +88,67 @@ impl Receiver {
         })
     }
 
+    #[cfg(test)]
     pub fn recover(
         admission: Admission,
         samples: &[crate::radio::ComplexSample],
         acquisition: &crate::radio::sync::Acquisition,
         max_psdu: usize,
     ) -> Result<Recovered, Error> {
+        Self::recover_with_policy(admission, samples, acquisition, max_psdu, false)
+    }
+
+    pub fn recover_aggregate(
+        admission: Admission,
+        samples: &[crate::radio::ComplexSample],
+        acquisition: &crate::radio::sync::Acquisition,
+        max_psdu: usize,
+    ) -> Result<Recovered, Error> {
+        Self::recover_with_policy(admission, samples, acquisition, max_psdu, true)
+    }
+
+    fn recover_with_policy(
+        admission: Admission,
+        samples: &[crate::radio::ComplexSample],
+        acquisition: &crate::radio::sync::Acquisition,
+        max_psdu: usize,
+        partial: bool,
+    ) -> Result<Recovered, Error> {
         if admission.capacity.psdu_bytes > max_psdu {
             return Err(Error::FrameLimit);
         }
-        if admission.capacity.ldpc {
-            return Err(Error::Coding);
-        }
         let metrics = super::iq::Demodulator::new(samples, acquisition, &admission)?.recover()?;
-        let psdu = super::bcc::recover(
-            admission.capacity,
-            admission.timing.data_symbols,
-            &metrics,
-            max_psdu,
-        )?;
-        Ok(Recovered { admission, psdu })
+        let (psdu, failed_codewords, first_failure) = if admission.capacity.ldpc {
+            let recovered = super::ldpc::recover(
+                &admission.trained.signal,
+                admission.capacity,
+                admission.timing.data_symbols,
+                &metrics,
+                max_psdu,
+                partial,
+            )?;
+            (
+                recovered.psdu,
+                recovered.failed_codewords,
+                recovered.first_failure,
+            )
+        } else {
+            (
+                super::bcc::recover(
+                    admission.capacity,
+                    admission.timing.data_symbols,
+                    &metrics,
+                    max_psdu,
+                )?,
+                0,
+                None,
+            )
+        };
+        Ok(Recovered {
+            admission,
+            psdu,
+            failed_codewords,
+            first_failure,
+        })
     }
 }

@@ -4,6 +4,65 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_eht_data_ldpc_independent_inventory() {
+    let layouts = include_str!("fixtures/iq/eht-data-ldpc-index.tsv");
+    assert_eq!(layouts.lines().skip(1).count(), 4259);
+    assert_eq!(
+        hex(&Sha256::digest(layouts.as_bytes())),
+        "580ae30fc80e009558835f452c504c11f84d53849a6c5f828e1772ca0231b6c3"
+    );
+    assert!(layouts
+        .lines()
+        .skip(1)
+        .all(|row| row.split('\t').count() == 13));
+
+    let payloads = include_str!("fixtures/iq/eht-data-ldpc-payload-index.tsv");
+    assert_eq!(payloads.lines().skip(1).count(), 120);
+    assert_eq!(
+        hex(&Sha256::digest(payloads.as_bytes())),
+        "f29f1ee62e91740b71d5e4e10ea83216644a9bf2d7d986f792c3906af0bdb4f6"
+    );
+    assert!(payloads
+        .lines()
+        .skip(1)
+        .all(|row| row.split('\t').count() == 26));
+}
+
+#[test]
+fn radio_eht_data_ldpc_iq_independent_inventory() {
+    let rows = include_str!("fixtures/iq/eht-data-ldpc-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 432);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "49b4810bbf75a967aae3f4f6ef09f3824c05e9caeee76280da2eccc26df95acf"
+    );
+    let corpus = fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq/eht-data-ldpc-iq.cs8"),
+    )
+    .unwrap();
+    assert_eq!(
+        hex(&Sha256::digest(&corpus)),
+        "0f447f7596a0dbf405b7124d82d67a0f54d8ddb16cff56adbbb46d9bdd814d7c"
+    );
+    let mut cursor = 0;
+    for row in rows.lines().skip(1) {
+        let columns: Vec<_> = row.split('\t').collect();
+        assert_eq!(columns.len(), 20);
+        let mcs = columns[3].parse::<u8>().unwrap();
+        assert_ne!(mcs, 13);
+        if mcs == 12 {
+            assert_eq!(columns[16], "0");
+        }
+        let offset: usize = columns[17].parse().unwrap();
+        let length: usize = columns[18].parse().unwrap();
+        assert_eq!(offset, cursor);
+        cursor += length;
+        assert_eq!(hex(&Sha256::digest(&corpus[offset..cursor])), columns[19]);
+    }
+    assert_eq!(cursor, corpus.len());
+}
+
+#[test]
 fn radio_eht_data_bcc_iq_independent_inventory() {
     let rows = include_str!("fixtures/iq/eht-data-bcc-iq-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 352);
