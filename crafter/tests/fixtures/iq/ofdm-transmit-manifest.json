@@ -1,7 +1,7 @@
 {
   "schema": "crafter.radio.transmit-oracle/v1",
   "generator_version": "6",
-  "generator_sha256": "ef50ea2b54a77cbd8d9d07e5987e6173dc4b1473cfb7f7893ec039709c813f45",
+  "generator_sha256": "97b70a1669ffb369925c728b629291f665c0622a7d663c8e257986a19479e92c",
   "source": "IEEE Std 802.11-2007 clause 17 and Annex G",
   "format": "cs8",
   "sample_rate_hz": 20000000,

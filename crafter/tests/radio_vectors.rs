@@ -2394,8 +2394,8 @@ fn radio_sampling_clock_vector_inventory_and_integrity() {
         );
     }
     for (field, file) in [
-        ("generator_sha256", "ofdm_clock_vectors.py"),
-        ("encoder_sha256", "ofdm_vectors.py"),
+        ("generator_sha256", "wifi/ofdm/clock.py"),
+        ("encoder_sha256", "wifi/ofdm/base.py"),
     ] {
         let source = root
             .join("../../../../tools/oracle/engine/backends")

@@ -470,7 +470,7 @@ all four BCC rates, including 5/6. Only FCS-valid MAC frames are published;
 HT aggregate recovery is described below. The existing `LegacyWifiDecoder`
 remains legacy-only.
 
-The independent oracle `ht_bcc_vectors.py` supplies 64 full-waveform fixtures:
+The independent oracle `python3 -m tools.oracle.engine.backends.wifi.ht.bcc` supplies 64 full-waveform fixtures:
 eight MCS values, both guard intervals, 100/4095-byte PSDUs, and clean or
 carrier-offset/multipath conditions. The kernel test supplies timing/CFO to
 isolate DATA correctness; the separate streaming test must acquire both from
@@ -489,7 +489,7 @@ or nonconvergence. Strict codeword recovery requires a zero syndrome, which
 does not replace MAC FCS. Aggregate recovery can retain tentative estimates
 from failed codewords under the separate policy below.
 
-`ldpc_vectors.py --check` independently solves systematic parity using GF(2)
+`python3 -m tools.oracle.engine.backends.wifi.ldpc.codeword --check` independently solves systematic parity using GF(2)
 Gaussian elimination. The Rust tests verify 36 complete codewords, correction
 of eight low-confidence sign errors per word, finite extreme input scales,
 dimension checks, unusable metrics and the iteration bound. This primitive is
@@ -497,7 +497,7 @@ connected to HT IQ through `WifiDecoder`. The internal rate-matching layer has i
 coverage of 208 geometry cases and 48 shortened/punctured/repeated streams,
 including both symbol-group sizes and exact information-bit recovery.
 
-`ht_ldpc_vectors.py --check` supplies 64 complete HT20 LDPC waveforms with the
+`python3 -m tools.oracle.engine.backends.wifi.ht.ldpc --check` supplies 64 complete HT20 LDPC waveforms with the
 same MCS/GI/length/impairment matrix as BCC. Streaming recovery checks exact
 PSDU bytes, FCS, sample boundaries and coding metadata. Independent malformed
 controls target nonconvergence, invalid SERVICE and bad MAC FCS. No BCC
@@ -552,7 +552,7 @@ the first parity failure also retains `LdpcNonconvergence` details. These
 diagnostics accompany recovered frames and require downstream match arms.
 Nonaggregated LDPC reception remains strict: any codeword failure rejects it.
 
-`ht_ampdu_vectors.py --check` generates 128 complete independent IQ fixtures
+`python3 -m tools.oracle.engine.backends.wifi.ht.ampdu --check` generates 128 complete independent IQ fixtures
 covering both coding families, MCS 0–7, both guard intervals, alignment,
 duplicate MPDUs and bad FCS, plus MCS 7 delimiter corruption, truncation,
 padding and aggregates larger than 4095 bytes. Four damaged-codeword fixtures
@@ -596,7 +596,7 @@ the NSS1/NSTS2 mapping in IEEE 802.11-2020 Table 19-18. They use bounded,
 allocation-free arithmetic, reject nonfinite inputs and unobservable channels,
 and retain finite behavior at extreme input scales through wider intermediates.
 
-`stbc_vectors.py --check` independently generates 2400 constellation/training
+`python3 -m tools.oracle.engine.backends.wifi.ofdm.stbc --check` independently generates 2400 constellation/training
 pairs across BPSK, QPSK, 16-QAM and 64-QAM and six channel pairs. Tests compare
 both supplied-channel and training-derived recovery against the independent
 expected symbols.
@@ -671,7 +671,7 @@ remains recorded as such.
 
 ## VHT-SIG-A parser increment
 
-The independent `vht_signal_vectors.py --check` corpus contains 1880 header
+The independent `python3 -m tools.oracle.engine.backends.wifi.vht.signal.a --check` corpus contains 1880 header
 vectors: 640 SU and 1240 MU cases covering all group IDs and bandwidth codes.
 It includes encoded/interleaved bits, per-user MU stream/coding fields and SU
 stream, partial-AID and MCS fields. Inventory tests check exact corpus integrity,

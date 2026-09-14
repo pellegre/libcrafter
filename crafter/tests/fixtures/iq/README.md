@@ -6,21 +6,21 @@ There are 120 expected response MPDUs, independent per-user phase/carrier/channe
 impairments, BCC/LDPC and one-DATA-stream STBC cases, and contiguous random-access
 RU schedules. Sum complex users before the single CS8 quantization. Common MCS4,
 common RU size and 2x-LTF/1600ns guard are coverage limits. Reproduce with
-`he_tb_multi_exchange_vectors.py --check`; no live interoperability is implied.
+`python3 -m tools.oracle.engine.backends.wifi.he.tb.exchange.multi --check`; no live interoperability is implied.
 
 `he-tb-multi-iq-index.tsv` indexes 276 simultaneous-user TB captures: two,
 four or nine disjoint RUs, independent payloads and per-user channels/phase,
 with optional unequal gain and residual carrier offsets spanning +/-350Hz.
 The generator sums complex user waveforms before signed-eight-bit quantization.
 These synthetic PSDUs do not establish Trigger association or MAC integrity.
-Reproduce with `he_tb_multi_iq_vectors.py --check`.
+Reproduce with `python3 -m tools.oracle.engine.backends.wifi.he.tb.multi --check`.
 
 `he-tb-data-iq-index.tsv` indexes 282 independent isolated-user TB waveforms.
 They cover all 16 HE20 RU positions, BCC/LDPC, one DATA stream with applicable
 DCM or STBC, both OFDMA training/guard modes, midambles, channel impairments
 and invalid SERVICE. Explicit Trigger fields accompany each waveform; these
 synthetic PSDUs are not MAC frames or automatic Trigger-association evidence.
-Generate with `he_tb_data_iq_vectors.py`; `--check` reproduces every byte.
+Generate with `python3 -m tools.oracle.engine.backends.wifi.he.tb.data`; `--check` reproduces every byte.
 
 `he-tb-prefix-index.tsv` indexes 256 independently generated HE20 TB IQ
 prefixes and `he-tb-prefix-invalid-index.tsv` adds 14 negative cases.
@@ -30,7 +30,7 @@ CFO/multipath. Invalid cases include wider signaling, wrong rate/repetition,
 QBPSK or erased signaling. Each capture is 677 complex cs8 samples, including
 a 37-sample leading offset. There is no HE training or DATA: these qualify
 recognition and header artifacts, not per-user simultaneous transmission,
-Trigger context or payload recovery. Regenerate with `he_tb_prefix_vectors.py`;
+Trigger context or payload recovery. Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.tb.prefix`;
 use `--check` for byte-for-byte reproduction.
 
 `he-tb-signal-a-index.tsv` contains 2048 independently encoded HE TB SIG-A
@@ -42,7 +42,7 @@ and interleaved soft-metric tests, not complete TB IQ or DATA qualification.
 HE's transmitted CRC nibble does not detect every single-bit change: tests
 preserve the blind spots in Trigger-supplied bits 40/41, while the spatial-copy
 check detects a blind-spot change at bit 18 for a 20 MHz header.
-Use `he_tb_signal_vectors.py --write` to regenerate; omit `--write` to verify.
+Use `python3 -m tools.oracle.engine.backends.wifi.he.tb.signal --write` to regenerate; omit `--write` to verify.
 
 `he-mu-mixed-iq-index.tsv` indexes 336 mixed-user HE20 MAC waveforms.
 Each packet combines BCC and LDPC users with independently selected MCS and
@@ -52,7 +52,7 @@ modulation is independent of DATA. The generator applies the common LDPC
 extra-segment decision to every user, retaining initial LDPC payload sizes
 but using final BCC payload sizes (27.3.12.5.4, equations 27-81–89).
 Expected frames and original user positions are recorded separately from IQ.
-Regenerate with `he_mu_mixed_iq_vectors.py`, adding `--check` to verify.
+Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.mu.mixed`, adding `--check` to verify.
 
 `he-mu-compressed-iq-index.tsv` indexes 242 independent compressed one-user
 HE20 MAC waveforms (27.3.11.8.4/Table27-28). There is no Common field, and the
@@ -60,14 +60,14 @@ raw SIG-A count remains zero while SIG-B duration varies with its modulation.
 All 10 SIG-B MCS/DCM pairs occur across DATA modes and all four guard/training
 pairs. Clean, bad-FCS and bad-user-CRC cases qualify exact frame recovery and
 rejection, not multi-user spatial separation. Regenerate with
-`he_mu_compressed_iq_vectors.py`, adding `--check` to verify.
+`python3 -m tools.oracle.engine.backends.wifi.he.mu.compressed`, adding `--check` to verify.
 
 `he-mu-ampdu-iq-index.tsv` indexes 94 independent MU PHY/MAC waveforms. Two
 checksummed MPDUs per user are encoded with BCC/LDPC, including DCM. Bad FCS,
 SERVICE, user-block CRC and LDPC codeword cases verify salvage without bypassing
 MAC integrity. Identical MPDUs on different RUs remain separate occurrences.
 The corpus covers all HE20 RU positions and preserves expected user indices.
-Regenerate with `he_mu_ampdu_iq_vectors.py`, adding `--check` to verify.
+Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.mu.ampdu`, adding `--check` to verify.
 
 `he-mu-data-iq-index.tsv` indexes 252 independent MU preamble-through-DATA cs8
 waveforms with synthetic per-user PSDUs (not MAC frames). They cover all HE20
@@ -75,7 +75,7 @@ RU positions, one stream/RU, BCC/LDPC, DCM, four guard/training pairs, extra
 LTF counts, midambles, flat/selective channels and CFO. Damaged SERVICE and
 user CRC cases preserve neighboring users. Quantization gain is capped at200
 and reduced when necessary to keep component peaks at120, without clipping.
-Regenerate with `he_mu_data_iq_vectors.py`; add `--check` to verify all bytes.
+Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.mu.data`; add `--check` to verify all bytes.
 
 `he-mu-stbc-iq-index.tsv` indexes 380 complete HE20 MU STBC waveforms.
 Coverage includes every RU position, BCC/LDPC through their highest supported
@@ -83,12 +83,12 @@ MCS, all four MU guard/training combinations, 2/4/6/8 LTFs, midambles with
 changing channels, either branch lost, distinct per-RU spatial mapping,
 compressed single-user signaling and MAC/FEC/header failures. Expected frames
 are exact FCS-qualified bytes, not decrypted payloads. Regenerate or verify
-using `he_mu_stbc_iq_vectors.py` with optional `--check`.
+using `python3 -m tools.oracle.engine.backends.wifi.he.mu.stbc.iq` with optional `--check`.
 
 `he-mu-stbc-training-long-index.tsv` adds 192 isolated fields with physical
 delays near each guard boundary, including branch losses and sparse training.
 This qualifies adaptive model selection without assuming short channels.
-Regenerate or verify with `he_mu_stbc_training_vectors.py --long-delay` and
+Regenerate or verify with `python3 -m tools.oracle.engine.backends.wifi.he.mu.stbc.training --long-delay` and
 optional `--check`; the original 768-case corpus remains unchanged.
 
 `he-ru-stbc-symbol.tsv` contains 880 independent floating-point STBC DATA
@@ -97,50 +97,50 @@ symbol phase/slope offsets, CFO, either branch erased, and an erased DATA
 tone. Expected coded-bit order is generated by forward interleaving and tone
 mapping; `-` denotes an expected zero-reliability bit. These isolate paired
 symbol demodulation, not headers, training, FEC, complete frames or RF.
-Regenerate or verify using `he_ru_stbc_symbol_vectors.py` with optional `--check`.
+Regenerate or verify using `python3 -m tools.oracle.engine.backends.wifi.he.ru.stbc` with optional `--check`.
 
 `he-ru-symbol.tsv` contains 640 independently generated floating-point DATA
 symbols over all 16 HE20 RU positions, BCC/LDPC constellation orders, DCM,
 known flat/selective channels, CFO, pilot phase/slope, and erased lower DCM
 halves. The forward oracle uses interleaving, tone mapping and an inverse DFT;
 these are isolated symbols, not complete packets or hardware captures.
-Regenerate with `he_ru_symbol_vectors.py`, adding `--check` to verify.
+Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.ru.symbol`, adding `--check` to verify.
 
 `he-dcm-half{12,24}-metrics.tsv` contains 1320 independent exact-rational
 joint-distance cases for 26/52-tone RU DCM, including even-half BPSK parity,
 QPSK/16-QAM mappings, noise and either/both erased observations. Regenerate with
-`he_dcm_vectors.py --half 12` or `--half 24`, adding `--check` to verify.
+`python3 -m tools.oracle.engine.backends.wifi.he.dcm.coding --half 12` or `--half 24`, adding `--check` to verify.
 
 `he-mu-ldpc-payload.tsv` contains 438 independently encoded payload cases:
 433 valid, four malformed SERVICE and one damaged last codeword. They cover
 all four HE20 RU sizes, MCS0..11, applicable DCM, one stream/STBC, padding and
 peer-forced extra segments. These are ordered coded metrics, not complete
-MU IQ or MAC qualification. Regenerate with `he_mu_ldpc_payload_vectors.py`
+MU IQ or MAC qualification. Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.mu.ldpc.payload`
 or verify with `--check`.
 
 `he-mu-ldpc-layout.tsv` contains 13696 independent forward per-user LDPC
 layouts, including extra segments requested by another user. It checks geometry,
 not MU codeword/IQ recovery or global admission. Regenerate with
-`he_mu_ldpc_layout_vectors.py` or verify with `--check`.
+`python3 -m tools.oracle.engine.backends.wifi.he.mu.ldpc.layout` or verify with `--check`.
 
 `he-mu{26,52,106,242}-bcc-index.tsv` contains 1714 independent per-user BCC
 payload vectors with post-FEC padding, applicable DCM filler, STBC groups,
 scrambler seeds and malformed SERVICE. These are coded-bit/PSDU vectors, not
-complete MAC or IQ packets. Regenerate with `he_bcc_vectors.py --mu-tones SIZE`
+complete MAC or IQ packets. Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.bcc.coding --mu-tones SIZE`
 or verify by adding `--check`.
 
 `he-mu{26,52,106,242}-capacity-index.tsv` contains 30858 independent forward
 padding cases for per-user MU payload geometry. These include the special
 26-tone DCM short-segment size, BCC filler only on 106/242, STBC groups and
 per-user LDPC extra segments. They are not LDPC puncturing admission or complete
-MU IQ qualification. Regenerate/verify using `he_capacity_vectors.py --mu-tones
+MU IQ qualification. Regenerate/verify using `python3 -m tools.oracle.engine.backends.wifi.he.capacity --mu-tones
 SIZE` with optional `--check`.
 
 `he-mu-training-index.tsv` indexes 384 isolated single-stream RU training
 fields covering all sixteen HE20 resource units, four MU guard/training pairs,
 three quantization gains, and flat/selective channels. These are not complete
-MU PPDUs or MAC validation. Regenerate with `he_mu_training_vectors.py` or
-verify with `he_mu_training_vectors.py --check`.
+MU PPDUs or MAC validation. Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.mu.training` or
+verify with `python3 -m tools.oracle.engine.backends.wifi.he.mu.training --check`.
 
 `he-mu-stbc-training-index.tsv` indexes 768 isolated two-STS MU training
 fields: all sixteen HE20 RUs, four guard/training pairs, 2/4/6/8 LTFs,
@@ -149,38 +149,38 @@ waveforms include physical delay taps, STS cyclic shifts, CFO, phase drift,
 and cs8 quantization. Channel estimates are checked against the physical
 channels, including pilot interpolation. These are not complete MU STBC
 packets or live radio qualification. Regenerate or verify using
-`he_mu_stbc_training_vectors.py` with optional `--check`.
+`python3 -m tools.oracle.engine.backends.wifi.he.mu.stbc.training` with optional `--check`.
 
 `he-mu-timing.tsv` contains 26529 independent forward MU timelines covering
 resolved SIG-B lengths, signaled LTF counts, all four MU training/guard pairs,
 STBC symbol parity, midamble boundaries and packet extension. These test timing
 arithmetic, not per-RU admission or complete IQ transmissions. Regenerate with
-`he_mu_timing_vectors.py --write` or verify without arguments.
+`python3 -m tools.oracle.engine.backends.wifi.he.mu.timing --write` or verify without arguments.
 
 `he-tb-timing.tsv` contains 3315 independent forward TB timelines: all three
 Trigger GI/LTF settings, signaled LTF counts, Doppler/midamble encodings,
 STBC symbol pairs, packet extension and the TB-specific 8us STF. These are
 timing vectors, not captured IQ, Trigger association or TB DATA qualification.
-Regenerate with `he_tb_timing_vectors.py --write` or verify without arguments.
+Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.tb.timing --write` or verify without arguments.
 
 `he-tb-ldpc-layout.tsv` contains 17276 independent forward TB rate-matching
 layouts. Both Trigger extra-segment flags are honored, including cases where
 the flag differs from the local transmitter recommendation. These qualify
 shortening/puncturing/repetition geometry, not codeword convergence or IQ.
-Regenerate with `he_tb_ldpc_layout_vectors.py --write` or verify without arguments.
+Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.tb.ldpc.layout --write` or verify without arguments.
 
 `he-tb-ldpc-payload.tsv` contains 677 independently encoded soft-metric payload
 cases: 672 valid cases spanning all four HE20 RU sizes, MCS/DCM/STBC and both
 explicit Trigger extra flags; four invalid SERVICE cases and one damaged final
 codeword. This is not an IQ/MAC capture. Regenerate using
-`he_tb_ldpc_payload_vectors.py --write` or verify without arguments.
+`python3 -m tools.oracle.engine.backends.wifi.he.tb.ldpc.payload --write` or verify without arguments.
 
 `he-sigb-iq-index.tsv` indexes 172 independently synthesized time-domain MU
 preamble/SIG-B captures: all ten MCS/DCM combinations, compressed/uncompressed
 allocations, 1/2/8/9/17 users, empty allocations, long and padded SIG-B fields,
 CFO/selective channels, damaged common/user CRCs and invalid count layouts.
 Files end at SIG-B, without
-HE training or DATA. Regenerate with `he_sig_b_iq_vectors.py`; use `--check` to
+HE training or DATA. Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.sig_b.iq`; use `--check` to
 verify in a temporary directory. This is offline signaling qualification only.
 
 `he-sig-b-modulation.tsv` contains 270 independent modulated streams plus 1294
@@ -188,33 +188,33 @@ single-symbol cases covering every interleaver input position. It covers all
 ten valid SIG-B MCS/DCM combinations, the PAPR rotation exception, weighted
 noisy observations, either erased DCM half, and checked BCC/header recovery.
 Coordinates are before constellation normalization, not time-domain IQ.
-Regenerate with `he_sig_b_modulation_vectors.py --write` or verify without flags.
+Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.sig_b.modulation --write` or verify without flags.
 
 `he-sig-b-coded.tsv` contains 450 independent punctured BCC streams covering
 all six SIG-B MCS values, with/without common fields, odd/even user counts,
 empty allocations, CRC/tail damage and arbitrary encoded trailing padding. Regenerate with
-`he_sig_b_coded_vectors.py --write` or verify without arguments. These are
+`python3 -m tools.oracle.engine.backends.wifi.he.sig_b.coded --write` or verify without arguments. These are
 deinterleaved coded bits, not IQ or end-to-end MU payload qualification.
 
 `he-sig-b-users.tsv` contains 3175 independently generated one/two-user blocks
 from IEEE 802.11ax-2021 Tables 27-27 through 27-30. It covers every spatial
 configuration and RU-relative position, reserved configurations, all 1024
 unused parameter values, non-MU fields, and independent per-user errors.
-Regenerate with `he_sig_b_user_vectors.py --write`; omit the flag to verify.
+Regenerate with `python3 -m tools.oracle.engine.backends.wifi.he.sig_b.user --write`; omit the flag to verify.
 These are bit-level vectors, not SIG-B IQ or MU DATA qualification.
 
 `he-sig-b-common.tsv` exhaustively maps all 256 HE20 SIG-B common allocation
 codes, using independent CRC polynomial division and literal Table 27-26
 templates. It records ordered RU sizes, first table slots, user counts, empty
 RUs, and distinct reserved/wider classifications. Generate with
-`he_sig_b_common_vectors.py --write` or verify without arguments. These are
+`python3 -m tools.oracle.engine.backends.wifi.he.sig_b.common --write` or verify without arguments. These are
 18-bit common-field fixtures, not SIG-B IQ or MU payload qualification.
 
 `he-mu-prefix-index.tsv` contains 160 independent HE20 MU IQ prefixes, covering
 SIG-B MCS/DCM, compression, all four guard/training codes, and clean or
 frequency-offset/selective channels. Thirteen invalid cases cover legacy-header
 checks, constellation discrimination, reserved fields, CRC/tail and erasure.
-`he_mu_prefix_vectors.py --check` reproduces them. Chunked receiver tests check
+`python3 -m tools.oracle.engine.backends.wifi.he.mu.prefix --check` reproduces them. Chunked receiver tests check
 MU diagnostics, bounded storage, gap resets and no MAC delivery. These prefixes
 contain neither SIG-B nor DATA and do not qualify MU payload or live reception.
 
@@ -224,7 +224,7 @@ BCC/LDPC flags, frequency offset/multipath and erased original SIG-A DATA
 tones. Repeats bypass interleaving; the second SIG-A DATA constellation is
 QBPSK, but pilots remain BPSK with their correct polarity sequence. The 18
 negative cases cover reserved values, CRC/tail, repeated legacy-header checks,
-rotation and truncation. `he_er_prefix_vectors.py --check` reproduces them.
+rotation and truncation. `python3 -m tools.oracle.engine.backends.wifi.he.er.prefix --check` reproduces them.
 These are signaling-only fixtures, not full ER DATA or MAC qualification.
 
 `he-dcm-metrics.tsv` contains 660 independent rational-distance cases for
@@ -232,7 +232,7 @@ BPSK, QPSK and 16-QAM DCM pairs, including off-grid points, weighted branches
 and erasures. `he-dcm-iq-index.tsv` contains 128 complete BCC/LDPC waveforms
 covering MCS0/1/3/4, the four compatible training/guard pairs, padding factors,
 midambles and corrupted FCS. Eight invalid SERVICE/truncated cases accompany it.
-`he_dcm_vectors.py --check` and `he_dcm_iq_vectors.py --check` reproduce them.
+`python3 -m tools.oracle.engine.backends.wifi.he.dcm.coding --check` and `python3 -m tools.oracle.engine.backends.wifi.he.dcm.iq --check` reproduce them.
 These qualify joint demapping, LDPC half-tone mapping, BCC interleaving and
 BPSK filler handling, not independent multiple spatial streams or live RF.
 
@@ -241,7 +241,7 @@ with periods of 10 or 20 DATA symbols and channel changes at training boundaries
 It covers every currently qualified SU MCS/GI/LTF combination, short Doppler
 packets with no midamble, final-symbol insertion exceptions, multiple refreshes
 and long pilot-sequence wraps. Twelve invalid cases erase or truncate training.
-`he_midamble_iq_vectors.py --check` independently reproduces both inventories.
+`python3 -m tools.oracle.engine.backends.wifi.he.midamble.iq --check` independently reproduces both inventories.
 The historical `he-bcc-iq-invalid-midamble` fixture is now recognized as a valid
 short Doppler-marked PHY carrying an arbitrary, non-MAC PSDU; its filename is
 retained for fixture compatibility. These tests are not live RF qualification.
@@ -249,7 +249,7 @@ retained for fixture compatibility. These tests are not live RF qualification.
 `he-ldpc-iq-index.tsv` contains 240 complete HE20 SU one-stream LDPC waveforms
 covering MCS0–11, all five guard/training pairs, four initial padding factors,
 tagged aggregates and deliberately corrupted FCS. Six invalid SERVICE/truncated
-waveforms are listed separately. `he_ldpc_iq_vectors.py --check` reproduces
+waveforms are listed separately. `python3 -m tools.oracle.engine.backends.wifi.he.ldpc.iq --check` reproduces
 the Gaussian-encoded, directly synthesized corpus independently of Rust.
 Kernel and chunked public receiver tests require exact PSDUs and valid MPDUs.
 MCS11 with sparse training and multipath also exercises finite-delay channel
@@ -258,7 +258,7 @@ estimation. These offline fixtures do not qualify live HE interoperability.
 `he-qam-index.tsv` contains all 1,024 HE constellation labels and 289 off-grid
 points with independent rational-distance soft metrics. `he-ldpc-tones.tsv`
 enumerates all 234 DATA-tone positions using a matrix-transpose oracle.
-`he_demapping_vectors.py --check` reproduces both from IEEE 802.11ax-2021
+`python3 -m tools.oracle.engine.backends.wifi.he.demapping --check` reproduces both from IEEE 802.11ax-2021
 Figures 27-37 through 27-40, Table 27-36 and Equation 27-95. Tests cover
 normalization, channel weights, bit-group preservation and invalid inputs.
 These demapping fixtures alone do not establish full HE LDPC IQ or live
@@ -266,7 +266,7 @@ hardware qualification; the complete waveform corpus above tests integration.
 
 `he-ldpc-rate-index.tsv` contains 17,583 independent forward HE20 SU LDPC
 sizing cases; `he-ldpc-rate-codewords.tsv` contains 72 Gaussian-encoded
-bitstreams. `he_ldpc_rate_vectors.py --check` reproduces both. These qualify
+bitstreams. `python3 -m tools.oracle.engine.backends.wifi.he.ldpc.rate --check` reproduces both. These qualify
 initial-segment inversion, extra-segment thresholds, shortening, puncturing,
 repetition and codeword recovery with post-FEC padding excluded. MCS0-11,
 DCM/STBC and stream counts here are coding dimensions, not IQ qualification.
@@ -274,7 +274,7 @@ DCM/STBC and stream counts here are coding dimensions, not IQ qualification.
 `he-mu-signal-a-index.tsv` contains 5,280 HE MU SIG-A bit/encoded-metric
 cases covering SIG-B MCS/DCM, compression and bandwidth, GI, Doppler-dependent
 LTF counts, and other field values. `he-mu-signal-a-invalid.tsv` adds 24 CRC,
-tail and reserved-field cases. Generate with `he_mu_signal_vectors.py --write`
+tail and reserved-field cases. Generate with `python3 -m tools.oracle.engine.backends.wifi.he.mu.signal --write`
 or verify without arguments. The raw symbol/user count is retained: an
 uncompressed value of 15 does not determine the exact SIG-B length by itself.
 These are header kernels, not MU IQ payload or hardware qualification.
@@ -284,13 +284,13 @@ independently corrupted codeword: SU, ER242 and ER106, each plain/DCM/STBC,
 with either the first or a middle codeword damaged. A long first MPDU overlaps
 the middle damaged word while a later MPDU remains intact. These check bounded
 partial recovery, SERVICE validation, per-MPDU FCS and failure diagnostics.
-Reproduce with `he_ldpc_partial_vectors.py --check`. Estimated PSDU bits are
+Reproduce with `python3 -m tools.oracle.engine.backends.wifi.he.ldpc.partial --check`. Estimated PSDU bits are
 not treated as verified frames; the existing aggregate scanner validates FCS.
 
 `he-er106-ldpc-rate-index.tsv` and `he-er242-ldpc-rate-index.tsv` add
 705 and 1,839 independent extended-range sizing cases. Their corresponding
 `-codewords.tsv` files contain 57 and 159 independently Gaussian-encoded
-bitstreams. Reproduce with `he_ldpc_rate_vectors.py --er-tones 106 --check`
+bitstreams. Reproduce with `python3 -m tools.oracle.engine.backends.wifi.he.ldpc.rate --er-tones 106 --check`
 and `--er-tones 242 --check`. These cover the ER MCS restrictions, DCM,
 STBC, shortened final segments, extra segments and multi-codeword payloads.
 They qualify coding geometry and recovery, not upper-106-tone IQ reception
@@ -302,13 +302,13 @@ Tables27-35/36 define its BCC and LDPC permutations; Tables27-40/41 define
 pilot signs and positions. Geometry tests cover permutations and bounds, while
 the existing complete242-tone waveform corpus checks refactor compatibility.
 `he-er106-iq-index.tsv` and `he-er106-iq-invalid-index.tsv` add104 complete
-waveforms and16 negative cases generated by `he_er_iq_vectors.py --upper106`.
+waveforms and16 negative cases generated by `python3 -m tools.oracle.engine.backends.wifi.he.er.iq --upper106`.
 They qualify upper106 MCS0 BCC/LDPC, DCM, STBC, all compatible guard/LTF
 pairs, midambles, aggregate FCS handling, streaming limits and packet metadata.
 This is offline IQ qualification, not live radio interoperability or throughput.
 
 `he-er106-training-index.tsv` contains54 isolated upper106 HE-LTF fixtures
-from `he_er_training_vectors.py`: single-stream and two-STS STBC training,
+from `python3 -m tools.oracle.engine.backends.wifi.he.er.training`: single-stream and two-STS STBC training,
 all compatible guard/LTF pairs, three quantization gains, and flat/selective
 channels. These fields omit the PPDU prefix and DATA; they qualify the private
 format-aware estimator and zero estimates outside the allocation, not full IQ reception.
@@ -322,7 +322,7 @@ normative values. A direct unquantized tone test checks absolute receiver gain
 at all five guard/training combinations, independently of successful decoding.
 
 `he-ampdu-iq-index.tsv` records 200 complete HE20 SU BCC PHY/MAC IQ cases
-from `he_ampdu_iq_vectors.py`: MCS0-9, all five training/guard pairs, single
+from `python3 -m tools.oracle.engine.backends.wifi.he.ampdu.iq`: MCS0-9, all five training/guard pairs, single
 and multiple QoS MPDUs, mixed tags, EOF padding and intentionally bad FCS.
 Expected PSDUs include corrupted FCS bytes; expected emitted MPDUs exclude
 those frames while retaining later valid frames. Independent preamble acquisition,
@@ -332,7 +332,7 @@ Public `WifiDecoder` tests use this corpus at two chunk sizes, and packet-source
 tests preserve original bytes and HE metadata. This is not hardware qualification.
 
 `he-bcc-iq-index.tsv` and `he-bcc-iq-invalid-index.tsv` record 151 positive
-and six negative HE20 SU one-stream BCC IQ cases from `he_bcc_iq_vectors.py`.
+and six negative HE20 SU one-stream BCC IQ cases from `python3 -m tools.oracle.engine.backends.wifi.he.bcc.iq`.
 Complete PHY preambles and DATA carry synthetic PSDUs, not qualified MAC
 aggregates. Cases cover MCS0-9, all five SU training/guard pairs, frequency
 offset, multipath, pilot sequence wrap, invalid modes, SERVICE and truncation.
@@ -344,18 +344,18 @@ Admission intentionally does not reject a valid header just because later DATA
 has invalid SERVICE or is truncated; full recovery still rejects those payloads.
 
 `he-bcc-index.tsv` contains 435 independent HE BCC coded-bit/PSDU cases from
-`he_bcc_vectors.py`. It covers MCS0-9, DCM filler, STBC symbol-group geometry,
+`python3 -m tools.oracle.engine.backends.wifi.he.bcc.coding`. It covers MCS0-9, DCM filler, STBC symbol-group geometry,
 all nonzero scrambler seeds, invalid SERVICE and zero seed. Inputs are already
 deinterleaved and stream-recombined; they are not IQ or complete MAC aggregates.
 
 `he-capacity-index.tsv` contains 8,253 forward padding cases generated by
-`he_capacity_vectors.py`, starting from APEP lengths and allocating symbol
+`python3 -m tools.oracle.engine.backends.wifi.he.capacity`, starting from APEP lengths and allocating symbol
 segments and MAC/PHY padding. LDPC extra-segment cases test signaled geometry,
 not the puncturing threshold decision or codeword validity. This corpus is not
 IQ or MAC-frame recovery qualification.
 
 `he-timing-index.tsv` contains 10,252 independent HE20 SU forward timelines
-from `he_timing_vectors.py`, including per-DATA-symbol offset hashes, midamble
+from `python3 -m tools.oracle.engine.backends.wifi.he.timing`, including per-DATA-symbol offset hashes, midamble
 insertion, all SU guard/training pairs and packet extension. These are timing
 checks, not IQ waveforms, DATA mode admission or multi-stream RX qualification.
 
@@ -365,20 +365,20 @@ DATA stream with/without STBC, midambles and packet extension. Both ER tone
 allocations share these clocks. This does not qualify ER payload recovery.
 
 `he-er106-capacity-index.tsv` and `he-er242-capacity-index.tsv` add 177 and
-619 independent forward payload-capacity cases from `he_capacity_vectors.py`
+619 independent forward payload-capacity cases from `python3 -m tools.oracle.engine.backends.wifi.he.capacity`
 with `--er-tones 106` or `--er-tones 242`. They cover explicit ER mode limits,
 BCC/LDPC, DCM, STBC, padding boundaries and both LDPC extra-segment branches.
 These are bit-budget checks, not upper106 IQ or codeword qualification.
 
 `he-er106-bcc-index.tsv` and `he-er242-bcc-index.tsv` contain 165 and225
-independent BCC coded-bit cases from `he_bcc_vectors.py --er-tones 106|242`.
+independent BCC coded-bit cases from `python3 -m tools.oracle.engine.backends.wifi.he.bcc.coding --er-tones 106|242`.
 They cover exact PSDUs, all nonzero scrambler seeds, malformed SERVICE/zero
 seed, DCM filler and STBC-group post-FEC padding. Tests additionally exercise
 soft-metric scales, unused extreme-valued positions and allocation limits.
 These fixtures are not complete IQ or MAC frames.
 
 `he-er-iq-index.tsv` and its invalid index contain 280 complete ER242 waveforms
-and 16 negative cases from `he_er_iq_vectors.py`. They cover BCC/LDPC MCS0-2,
+and 16 negative cases from `python3 -m tools.oracle.engine.backends.wifi.he.er.iq`. They cover BCC/LDPC MCS0-2,
 DCM MCS0/1, STBC, all compatible guards, four padding factors, midambles10/20,
 selective channels/CFO, exact PSDUs and independently framed aggregate members.
 ER training is boosted while DATA is not, and pilots account for the repeated
@@ -434,10 +434,10 @@ Regenerate from the repository root with Python 3.10 or later, without optional
 packages, devices, network access, or the production decoder:
 
 ```sh
-python3 tools/oracle/engine/backends/ofdm_vectors.py
+python3 -m tools.oracle.engine.backends.wifi.ofdm.base
 ```
 
-Use `python3 tools/oracle/engine/backends/ofdm_vectors.py --check` to regenerate
+Use `python3 -m tools.oracle.engine.backends.wifi.ofdm.base --check` to regenerate
 into temporary storage and compare every artifact without changing this directory.
 This also verifies the generator hash; Rust fixture tests use only crate-local
 files so they remain usable outside the full workspace checkout.
@@ -535,7 +535,7 @@ No synthetic waveform is evidence of live receiver agreement.
 
 ### Implemented independent DSSS/CCK inventory
 
-`python3 tools/oracle/engine/backends/dsss_vectors.py` creates 32 bounded
+`python3 -m tools.oracle.engine.backends.wifi.dsss` creates 32 bounded
 `dsss-*` fixtures. `--check` regenerates in a temporary directory and compares
 all bytes, including the inventory and generator digest, without changing the
 checked-in files. The encoder imports only Python's standard library. The
@@ -593,7 +593,7 @@ BCC/LDPC, 100/4095-byte PSDUs, clean or carrier-offset/multipath conditions.
 They contain one space-time stream, no extension streams and 800 ns GI.
 The 24 us preamble and DATA pilot polarity offset follow IEEE 802.11-2020
 19.3.9.5 and 19.3.11.11.3. Short GI with immediate DATA is excluded by the
-19.3.11.11.6 note. `ht_greenfield_vectors.py --check` verifies regeneration;
+19.3.11.11.6 note. `python3 -m tools.oracle.engine.backends.wifi.ht.greenfield --check` verifies regeneration;
 fixture integrity checks alone do not establish streaming receive support.
 `ht-greenfield-invalid-index.tsv` adds eight malformed waveforms for header
 CRC, unsupported configurations, SERVICE and MAC FCS rejection tests.
@@ -605,7 +605,7 @@ BCC/LDPC, for exact per-MPDU recovery, duplicate identity and output limits.
 `stbc-pairs.tsv` contains 2400 independently generated two-symbol observations
 and two HT-LTF observations, with expected channels and constellation symbols.
 It covers BPSK/QPSK/16-QAM/64-QAM, either channel missing, opposite channels,
-complex gains and weak gains. `stbc_vectors.py --check` verifies regeneration.
+complex gains and weak gains. `python3 -m tools.oracle.engine.backends.wifi.ofdm.stbc --check` verifies regeneration.
 These are algebra fixtures, not complete waveforms or hardware qualification.
 `ht-stbc-index.tsv` separately inventories 192 full simulated receive waveforms
 from two independent transmit chains: MCS0–7, BCC/LDPC, mixed GI400/800 or
@@ -616,7 +616,7 @@ fixtures do not establish single-antenna STBC transmission or live reception.
 ## VHT aggregate byte fixtures
 
 `vht-reference-index.tsv` contains 9253 independent radiotap metadata cases,
-generated by `vht_reference_vectors.py [--check]`. It covers every combination
+generated by `python3 -m tools.oracle.engine.backends.wifi.vht.reference [--check]`. It covers every combination
 of known bits, absent-user fields, MCS/NSS values, bandwidth/group/coding values
 and A-MPDU status flags. Eligibility is the implemented VHT20 SU NSS1 BCC/LDPC
 subset; an excluded record can still describe a valid unsupported waveform.
@@ -625,7 +625,7 @@ known STBC cannot coexist with short-GI symbol-count disambiguation.
 Unknown fields remain unknown rather than inheriting their unused flag bits.
 
 `he-ampdu-index.tsv` contains 46 independent framing cases generated by
-`he_ampdu_vectors.py`: mixed tagged/untagged frames, spacing, EOF padding,
+`python3 -m tools.oracle.engine.backends.wifi.he.ampdu.frame`: mixed tagged/untagged frames, spacing, EOF padding,
 malformed ordering, bad FCS recovery, split length bits and preserved flags.
 IEEE 802.11ax-2021 Table 9-527 and 26.6.2 distinguish nonempty tagged MPDUs
 from zero-length EOF padding. This is byte framing only, not acknowledgment
@@ -639,7 +639,7 @@ octet counts, large MPDUs, a PSDU above the HT total-length limit, corruption,
 truncation and invalid EOF ordering. Malformed cases retain earlier recovered
 FCS-valid bytes and report errors; an EOF-order violation stops publication.
 
-Regenerate with `python3 tools/oracle/engine/backends/vht_ampdu_vectors.py`;
+Regenerate with `python3 -m tools.oracle.engine.backends.wifi.vht.ampdu.frame`;
 use `--check` for a read-only exact comparison. Authority is IEEE 802.11-2020
 9.7.1-2 and 10.12.6-8, a superseded base recorded in the PHY evidence map.
 These are framing fixtures, not evidence of complete VHT RX or RF qualification.
@@ -647,7 +647,7 @@ These are framing fixtures, not evidence of complete VHT RX or RF qualification.
 `vht-ampdu-iq-index.tsv` and its 54 CS8 files extend the complete VHT waveform
 model with two-MPDU aggregates across MCS0-8 and both GIs. Cases cover repeated
 identical MPDUs, one bad FCS followed by a valid MPDU, and a 4100-byte MPDU.
-Regenerate or verify with `vht_ampdu_iq_vectors.py [--check]`. All inputs are
+Regenerate or verify with `python3 -m tools.oracle.engine.backends.wifi.vht.ampdu.iq [--check]`. All inputs are
 synthetic; complete offline recovery does not establish hardware interoperability.
 
 ## Legacy transmit oracle corpus
@@ -691,14 +691,14 @@ evidence as described in `docs/radio.md`.
 VHT20 MCS0-8, initial symbol counts through 1512 and one/two-symbol groups.
 `vht-ldpc-rate-codewords.tsv` contains 54 independently Gaussian-encoded
 information/transmitted streams, including PHY padding, shortening, puncturing
-and repetition. Regenerate with `vht_ldpc_rate_vectors.py` in the oracle backend;
+and repetition. Regenerate with `python3 -m tools.oracle.engine.backends.wifi.vht.ldpc.rate` in the oracle backend;
 `--check` checks exact contents. These are internal coding fixtures, not complete
 IQ waveforms or a VHT STBC/LDPC receiver qualification claim.
 
 ## VHT LDPC complete IQ vectors
 
 `vht-ldpc-iq-index.tsv` describes 73 complete independent waveforms generated
-by `vht_ldpc_iq_vectors.py [--check]`: MCS0-8, both guard intervals, duplicate
+by `python3 -m tools.oracle.engine.backends.wifi.vht.ldpc.iq [--check]`: MCS0-8, both guard intervals, duplicate
 frames, a 4100-byte MPDU, corrupted first-MPDU FCS, a deliberately damaged
 LDPC codeword followed by an intact MPDU, and CFO/multipath cases.
 The three `vht-ldpc-iq-invalid-index.tsv` waveforms corrupt SERVICE, extra-symbol
@@ -711,21 +711,21 @@ mapping are independent of the receiver. No physical radio supplied these bytes.
 simulations: MCS0-8, BCC/LDPC, both guard intervals, duplicates, large frames,
 CFO/multipath, bad FCS and a damaged LDPC codeword. Nine negative cases in
 `vht-stbc-iq-invalid-index.tsv` exercise signaling, training, SERVICE, SIG-B and
-truncation. `vht_stbc_iq_vectors.py [--check]` constructs the two transmit chains
+truncation. `python3 -m tools.oracle.engine.backends.wifi.vht.stbc.iq [--check]` constructs the two transmit chains
 independently of production code, applies source-defined CSD, and sums them into
 one synthetic received IQ stream. These fixtures do not qualify physical
 reception or claim single-antenna STBC transmission.
 ## HE SU signaling vectors
 
 `he-signal-a-index.tsv` contains 1984 independent header bit/encoded-metric
-cases generated by `tools/oracle/engine/backends/he_signal_vectors.py --write`.
+cases generated by `python3 -m tools.oracle.engine.backends.wifi.he.signal --write`.
 Run the generator without arguments to verify the committed corpus. Polynomial
 division is anchored by the published 802.11ax-2021 27.3.11.7.3 CRC example.
 Fields follow Tables 27-18/19; interleaving follows Table 27-35. These test
 signaling interpretation, not DATA configuration admission or complete IQ RX.
 
 `he-su-prefix-index.tsv` and `he-su-prefix-invalid-index.tsv` add 96 valid and
-10 invalid CS8 preamble prefixes, generated by `he_prefix_iq_vectors.py` (use
+10 invalid CS8 preamble prefixes, generated by `python3 -m tools.oracle.engine.backends.wifi.he.prefix.iq` (use
 `--check` to verify). Each starts with 37 silent samples and ends after HE-SIG-A
 at sample677, at 20Msps. The receiver must acquire its own timing/channel and
 recover the exact header. Cases cover MCS0-11, all four GI/LTF signaling codes,
@@ -735,7 +735,7 @@ power factor from 27.3.11.3-4. These files intentionally have no HE training or
 DATA field and do not establish full HE reception.
 
 `he-transform-index.tsv` supplies 1920 input/output pairs for ten mathematical
-128/256-point transform cases. `he_fft_vectors.py --write` generates the file;
+128/256-point transform cases. `python3 -m tools.oracle.engine.backends.wifi.he.fft --write` generates the file;
 without flags it checks it. The reference uses a double-precision direct DFT,
 not the receiver's radix-2 implementation. Complex ramps and asymmetric inputs
 test bin ordering and phase, alongside DC, impulse and Nyquist cases. Rust
@@ -744,23 +744,23 @@ validation for HE training/DATA primitives, not frame or throughput qualificatio
 
 `he-training4-index.tsv` and its invalid counterpart contain 24 complete HE SU
 preambles followed by an uncoded channel probe, plus five malformed/truncated
-cases. The generator is `he_training_vectors.py` (`--check` verifies the corpus).
+cases. The generator is `python3 -m tools.oracle.engine.backends.wifi.he.training` (`--check` verifies the corpus).
 Equation27-43 supplies the 4x LTF sequence; Equations27-22/23/38 supply HE-STF.
 Both 4x guard intervals, three gains, CFO, multipath and changed HE-field mapping
 are covered. Tests acquire timing and CFO normally, fit the observed channel
 against the independently simulated transfer function, and recover all242 probe
 signs. The probe is not a standard DATA field; there are no MAC bytes to publish.
 `he-training-sparse-index.tsv` lists 36 independent single-stream HE 1x/2x
-training and uncoded channel-probe captures generated by `he_training_vectors.py`.
+training and uncoded channel-probe captures generated by `python3 -m tools.oracle.engine.backends.wifi.he.training`.
 It covers 1x/0.8us, 2x/0.8us and 2x/1.6us guards, three gains and four channel
 conditions. These mathematical probes are not valid HE DATA or MAC frames.
 `he-tb-schedule.tsv` contains 2304 independent Trigger allocation cases from
-`he_tb_schedule_vectors.py`: every HE20 starting RU, RA count and More flag for
+`python3 -m tools.oracle.engine.backends.wifi.he.tb.schedule`: every HE20 starting RU, RA count and More flag for
 both random-access AIDs, plus all pairs of RU supports. It tests range expansion
 and overlap detection, not RF acquisition, MAC association or spatial separation.
 
 `he-tb-exchange-index.tsv` inventories synthetic legacy OFDM Basic Triggers
-followed by HE20 TB aggregates from `he_tb_exchange_vectors.py`. The index
+followed by HE20 TB aggregates from `python3 -m tools.oracle.engine.backends.wifi.he.tb.exchange.base`. The index
 records complete expected MAC bytes, Trigger/TB positions and IQ checksums.
 Negative cases include absent/bad-FCS Triggers, mismatched context, expired
 protection duration and bad response MPDU FCS. Zero and reserved Duration
@@ -775,24 +775,24 @@ post-quantization EVM is recoverable and both exact response MPDUs are required.
 The EVM values characterize these deterministic fixtures, not HackRF RF limits.
 `he-tb-exchange-quality.tsv` makes those four measurements reproducible with
 exact synthetic carrier/channel/STBC knowledge. Regenerate it with
-`he_tb_exchange_quality_vectors.py`; its nearest-point errors are diagnostic
+`python3 -m tools.oracle.engine.backends.wifi.he.tb.exchange.quality`; its nearest-point errors are diagnostic
 of the stored samples, not an alternate decoder or permission to publish them.
 
 `he-tb-ht-exchange-index.tsv` adds 16 independent HT20 Trigger carriers:
 MCS0/7, BCC/LDPC, plain/aggregated MPDUs, and long/short GI. The long-GI
 cases expect both HE TB response MPDUs; short-GI carriers still yield their
 Trigger bytes but must not seed context (ax26.5.2.2.1). The generator is
-`he_tb_ht_exchange_vectors.py`. These synthetic exchanges do not establish
+`python3 -m tools.oracle.engine.backends.wifi.he.tb.exchange.ht`. These synthetic exchanges do not establish
 recipient capability negotiation or live HT-to-HE interoperability.
 
 `he-tb-vht-exchange-index.tsv` adds 24 VHT20 Trigger exchanges from
-`he_tb_vht_exchange_vectors.py`: MCS0/4/8, BCC/LDPC, one or two identical
+`python3 -m tools.oracle.engine.backends.wifi.he.tb.exchange.vht`: MCS0/4/8, BCC/LDPC, one or two identical
 Triggers per aggregate, and long/short GI. The final index column records
 Trigger count; long GI expects both TB response MPDUs, whereas short GI
 must not seed context. This is offline evidence only, not 5GHz RF validation.
 
 `he-tb-he-exchange-index.tsv` adds 12 HE SU and HE ER SU Trigger exchanges
-from `he_tb_he_exchange_vectors.py`. It covers BCC/LDPC, plain/DCM carriers,
+from `python3 -m tools.oracle.engine.backends.wifi.he.tb.exchange.he`. It covers BCC/LDPC, plain/DCM carriers,
 matching carrier/response BSS color, a mismatched-color rejection, and the
 prohibition on using an STBC PPDU as Trigger context. The Trigger MPDU itself
 must still be recovered in every case. These synthetic exchanges do not
@@ -805,7 +805,7 @@ one DATA stream, two space-time streams summed into one receive chain, BCC
 MCS0–9 and LDPC MCS0–11, all four compatible LTF/guard pairs, four initial
 padding factors, 10/20-symbol changing-channel midambles, and either branch
 lost. `he-stbc-iq-invalid-index.tsv` adds eight SERVICE, truncation and erased
-training cases. The generator is `he_stbc_iq_vectors.py`; it uses direct IDFT,
+training cases. The generator is `python3 -m tools.oracle.engine.backends.wifi.he.stbc.iq`; it uses direct IDFT,
 source P/R training matrices and Table21-20 mapping, not libcrafter's receiver.
 Full PSDUs, expected FCS-valid MPDUs, DATA sample bounds and hashes are indexed.
 This corpus does not establish live HE interoperability or TX qualification.
