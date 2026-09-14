@@ -1,7 +1,7 @@
-//! Explicit, bounded HackRF transmission of encoded legacy Wi-Fi IQ.
+//! Explicit, bounded HackRF transmission of protocol-independent samples.
 
 #[cfg(feature = "radio-hackrf")]
-use super::{EncodedWifiTransmission, IqSink};
+use super::{EncodedSamples, IqSink, IqSinkOutcome, SampleCompletion};
 use super::{RadioError, RadioResult};
 use std::{
     sync::{
@@ -37,12 +37,14 @@ impl HackRfTxConfig {
             });
         }
         if self.center_frequency_hz == 0
-            || self.sample_rate_hz != 20_000_000
+            || self.sample_rate_hz == 0
+            || self.sample_rate_hz > 20_000_000
             || self.baseband_filter_hz == 0
         {
             return Err(RadioError::Invalid {
                 field: "RF configuration",
-                reason: "requires explicit frequency, 20 Msps, and nonzero filter",
+                reason:
+                    "requires explicit frequency, a rate in 1..=20000000 Hz, and nonzero filter",
             });
         }
         if self.tx_vga_gain_db > 47 {
@@ -220,6 +222,9 @@ impl TxShared {
     pub(super) fn done(&self) -> bool {
         self.lock().done
     }
+    pub(super) fn stats(&self) -> HackRfTxStats {
+        self.lock().stats.clone()
+    }
     pub(super) fn remaining(&self) -> Duration {
         self.deadline.saturating_duration_since(Instant::now())
     }
@@ -240,7 +245,7 @@ impl TxShared {
         if let Some(error) = state.fault.take() {
             return Err(error);
         }
-        if state.stats.completed_repetitions != self.repetitions {
+        if !stopped || state.stats.completed_repetitions != self.repetitions {
             return Err(RadioError::Source(
                 "HackRF transmission stopped before plan completion".into(),
             ));
@@ -284,16 +289,35 @@ impl HackRfTxSink {
 }
 
 #[cfg(feature = "radio-hackrf")]
-impl<T: EncodedWifiTransmission> IqSink<T> for HackRfTxSink {
+impl<T: EncodedSamples> IqSink<T> for HackRfTxSink {
     fn write(&mut self, tx: &T) -> RadioResult<()> {
+        self.write_outcome(tx).map(|_| ())
+    }
+    fn write_outcome(&mut self, tx: &T) -> RadioResult<IqSinkOutcome> {
+        self.last_stats = None;
+        tx.validate_samples()?;
+        if tx.sample_rate_hz() != self.config.sample_rate_hz {
+            return Err(RadioError::Invalid {
+                field: "sample_rate_hz",
+                reason: "encoded samples do not match the configured device rate",
+            });
+        }
         self.cancelled.store(false, Ordering::Release);
         let shared = Arc::new(TxShared::new(
-            tx.cs8(),
+            tx.samples_cs8(),
             &self.config,
             Arc::clone(&self.cancelled),
         )?);
-        self.last_stats = Some(self.native.transmit(shared)?);
-        Ok(())
+        let result = self.native.transmit(Arc::clone(&shared));
+        self.last_stats = Some(shared.stats());
+        let stats = result?;
+        Ok(IqSinkOutcome {
+            samples_requested: stats.requested_samples,
+            samples_supplied: Some(stats.supplied_samples),
+            padded_samples: stats.padded_samples,
+            completion: SampleCompletion::DeviceCompleted,
+            live: Some(true),
+        })
     }
 }
 
@@ -314,6 +338,24 @@ mod tests {
             repetitions: 2,
             inter_burst_gap_samples: 2,
         }
+    }
+
+    #[test]
+    fn radio_hackrf_tx_rate_is_device_configuration_and_completion_requires_stop() {
+        let mut config = config();
+        config.sample_rate_hz = 8_000_000;
+        assert!(config.validate().is_ok());
+        config.sample_rate_hz = 20_000_001;
+        assert!(config.validate().is_err());
+        config.sample_rate_hz = 0;
+        assert!(config.validate().is_err());
+        config.sample_rate_hz = 8_000_000;
+        let shared = TxShared::new(&[1, 2], &config, Arc::new(AtomicBool::new(false))).unwrap();
+        assert!(shared.fill(&mut [0; 512]).is_some());
+        assert!(shared.finish((0, 0), false).is_err());
+        assert!(!shared.stats().stopped);
+        assert!(shared.finish((1, 4), true).is_err());
+        assert_eq!(shared.stats().firmware_shortfalls, 1);
     }
 
     #[test]

@@ -1553,6 +1553,7 @@ impl PhyDecoder for DsssCckDecoder {
                             bytes: p.bytes,
                             link_type: LinkType::Ieee80211,
                             integrity: FrameIntegrity::ValidFcs,
+                            framing: super::FrameFraming { trailer_bytes: 4 },
                             config: config.clone(),
                             start: p.start,
                             end_sample_index: p.next.ceil() as u64,

@@ -3,7 +3,8 @@ use std::collections::VecDeque;
 
 use super::*;
 use crate::wire::{
-    BackendKind, PacketMetadata, PacketOrigin, PacketRecord, PacketSource, WireError,
+    BackendKind, CaptureFcs, PacketMetadata, PacketOrigin, PacketRecord, PacketSource,
+    WifiCaptureMetadata, WireError,
 };
 use crate::{CrafterError, Packet};
 
@@ -15,8 +16,11 @@ pub struct RadioReceiveMetadata {
     pub end_sample_index: u64,
     pub rate_bps: u32,
     pub integrity: FrameIntegrity,
-    /// Number of original trailer bytes omitted from packet parsing.
+    /// IEEE 802.11 trailer bytes omitted from parsing; zero for other protocols.
+    /// Use `framing` for protocol-independent trailer disposition.
     pub stripped_fcs_bytes: usize,
+    /// Protocol-declared framing; a trailer need not be an IEEE 802.11 FCS.
+    pub framing: FrameFraming,
     pub diagnostics: Vec<PhyDiagnostic>,
 }
 
@@ -112,38 +116,42 @@ impl<S: IqSource, D: PhyDecoder> PacketSource for RadioPacketSource<S, D> {
     }
 }
 fn frame_record(frame: RecoveredFrame) -> crate::wire::Result<PacketRecord> {
-    if frame.link_type != LinkType::Ieee80211 {
-        return Err(CrafterError::invalid_field_value(
-            "radio link type",
-            "requires IEEE 802.11 MAC bytes",
-        )
-        .into());
-    }
-    if frame.integrity == FrameIntegrity::InvalidFcs {
-        return Err(CrafterError::invalid_field_value(
-            "radio FCS",
-            "invalid integrity cannot become a packet",
-        )
-        .into());
-    }
-    let stripped = if frame.integrity == FrameIntegrity::ValidFcs {
-        4
-    } else {
-        0
-    };
-    let len =
-        frame.bytes.len().checked_sub(stripped).ok_or_else(|| {
-            CrafterError::buffer_too_short("radio FCS", stripped, frame.bytes.len())
-        })?;
-    let packet = Packet::decode_from_link(LinkType::Ieee80211, &frame.bytes[..len])?;
+    let stripped = frame.framing.trailer_bytes;
+    let len = frame.bytes.len().checked_sub(stripped).ok_or_else(|| {
+        CrafterError::buffer_too_short("radio trailer", stripped, frame.bytes.len())
+    })?;
+    let packet = Packet::decode_from_link(frame.link_type, &frame.bytes[..len])?;
     let original_len = u32::try_from(frame.bytes.len()).map_err(|_| {
         CrafterError::invalid_field_value("radio frame length", "exceeds metadata length")
     })?;
-    let metadata = PacketMetadata::new()
+    let mut metadata = PacketMetadata::new()
         .with_origin(PacketOrigin::Captured)
         .with_backend(BackendKind::Other("radio".into()))
-        .with_link_type(LinkType::Ieee80211)
+        .with_link_type(frame.link_type)
         .with_original_len(original_len)
+        .with_captured_len(original_len);
+    if frame.link_type == LinkType::Ieee80211 {
+        let fcs = match (stripped, frame.integrity) {
+            (4, FrameIntegrity::ValidFcs | FrameIntegrity::InvalidFcs) => CaptureFcs::Present {
+                bytes: frame.bytes[len..].try_into().expect("four-byte trailer"),
+                valid: frame.integrity == FrameIntegrity::ValidFcs,
+            },
+            (0, FrameIntegrity::FcsAbsent) => CaptureFcs::Absent,
+            _ => CaptureFcs::Unknown,
+        };
+        metadata = metadata.with_wifi_capture(WifiCaptureMetadata {
+            link_type: frame.link_type,
+            radiotap: None,
+            padding: Vec::new(),
+            fcs,
+            driver_failed_fcs: None,
+            hardware_decrypted: None,
+        });
+        if let Some(wifi) = crate::wire::dot11_metadata::metadata_from_packet(&packet, None) {
+            metadata = metadata.with_wifi_metadata(wifi);
+        }
+    }
+    let metadata = metadata
         .with_captured_bytes(frame.bytes)
         .with_radio_metadata(RadioReceiveMetadata {
             config: frame.config,
@@ -151,7 +159,12 @@ fn frame_record(frame: RecoveredFrame) -> crate::wire::Result<PacketRecord> {
             end_sample_index: frame.end_sample_index,
             rate_bps: frame.rate_bps,
             integrity: frame.integrity,
-            stripped_fcs_bytes: stripped,
+            stripped_fcs_bytes: if frame.link_type == LinkType::Ieee80211 {
+                stripped
+            } else {
+                0
+            },
+            framing: frame.framing,
             diagnostics: frame.diagnostics,
         });
     Ok(PacketRecord::from_packet_metadata(packet, metadata))
@@ -370,6 +383,13 @@ mod tests {
         RecoveredFrame {
             bytes,
             integrity,
+            framing: FrameFraming {
+                trailer_bytes: if integrity == FrameIntegrity::FcsAbsent {
+                    0
+                } else {
+                    4
+                },
+            },
             link_type: LinkType::Ieee80211,
             config: config(),
             start: position(),
@@ -399,18 +419,20 @@ mod tests {
         assert!(matches!(
             source.next_record(),
             Err(WireError::Packet(CrafterError::BufferTooShort {
-                context: "radio FCS",
+                context: "radio trailer",
                 required: 4,
                 available: 1
             }))
         ));
         assert!(source.next_record().unwrap().is_none());
+        let invalid = frame_record(frame(
+            vec![0xd4, 0, 0, 0, 2, 0, 0, 0, 0, 1, 1, 2, 3, 4],
+            FrameIntegrity::InvalidFcs,
+        ))
+        .unwrap();
         assert!(matches!(
-            frame_record(frame(vec![0; 24], FrameIntegrity::InvalidFcs)),
-            Err(WireError::Packet(CrafterError::InvalidFieldValue {
-                field: "radio FCS",
-                ..
-            }))
+            invalid.metadata().wifi_capture().unwrap().fcs,
+            CaptureFcs::Present { valid: false, .. }
         ));
         let record = frame_record(frame(
             vec![0xd4, 0, 0, 0, 2, 0, 0, 0, 0, 1],

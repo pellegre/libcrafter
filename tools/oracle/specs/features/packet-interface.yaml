@@ -27,11 +27,20 @@ behaviors:
       - managed_and_ethernet_formats_are_ethernet
       - monitor_and_wifi_iq_formats_are_dot11
       - raw_capture_constructors_preserve_existing_behavior
+  - name: radio-codec-boundary
+    checks:
+      - recovered_link_type_selects_typed_packet_parser
+      - codec_declares_trailer_disposition_independently_of_integrity
+      - normalized_radio_preserves_original_bytes_and_occurrence_metadata
+      - sample_transport_accepts_non_wifi_codec_output
+      - packet_byte_counts_are_separate_from_sample_completion
+      - live_completion_never_claims_peer_reception
 coverage_cases:
   - crafter-normalized-wifi-equivalence
   - crafter-normalized-wifi-provenance
   - crafter-normalized-wifi-fcs-padding
   - crafter-monitor-driver-framing
+  - crafter-radio-codec-contract
 supported_cases: []
 backend_support:
   libcrafter:

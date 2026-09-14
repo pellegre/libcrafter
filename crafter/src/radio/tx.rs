@@ -1,4 +1,4 @@
-//! Packet-shaped Wi-Fi IQ transmission with offline and explicit live sinks.
+//! Packet codecs and protocol-independent sample transmission.
 
 use super::{
     DsssPreamble, HtTransmission, HtTxConfig, LegacyDsssCckRate, LegacyDsssCckTransmission,
@@ -9,6 +9,77 @@ use crate::{
     wire::{BackendKind, PacketRecord, PacketWriter, WireError, WriteReport},
     Dot11,
 };
+
+/// Storage format at the sample transport boundary. One sample is one I/Q pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SampleFormat {
+    Cs8,
+}
+
+/// Protocol-independent, already encoded sample storage.
+pub trait EncodedSamples: Clone {
+    fn samples_cs8(&self) -> &[i8];
+    fn sample_rate_hz(&self) -> u32;
+    fn sample_format(&self) -> SampleFormat {
+        SampleFormat::Cs8
+    }
+    fn validate_samples(&self) -> RadioResult<()> {
+        if self.sample_rate_hz() == 0
+            || self.samples_cs8().is_empty()
+            || self.samples_cs8().len() % 2 != 0
+        {
+            return Err(RadioError::Invalid {
+                field: "samples",
+                reason: "requires a nonzero rate and nonempty complete I/Q pairs",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedSamples {
+    pub cs8: Vec<i8>,
+    pub sample_rate_hz: u32,
+}
+
+impl EncodedSamples for OwnedSamples {
+    fn samples_cs8(&self) -> &[i8] {
+        &self.cs8
+    }
+    fn sample_rate_hz(&self) -> u32 {
+        self.sample_rate_hz
+    }
+}
+
+/// Local completion evidence; none of these states establishes peer reception.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SampleCompletion {
+    Unconfirmed,
+    Stored,
+    DeviceCompleted,
+    Incomplete,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IqSinkOutcome {
+    /// Complex samples in the device plan, including repetitions and gaps.
+    pub samples_requested: u64,
+    /// Plan samples supplied to the sink; unknown for legacy adapters.
+    pub samples_supplied: Option<u64>,
+    /// Additional transport padding, in complex samples.
+    pub padded_samples: u64,
+    pub completion: SampleCompletion,
+    /// Whether this sink used live hardware, if known.
+    pub live: Option<bool>,
+}
+
+/// Codec from the existing typed packet abstraction into transport samples.
+pub trait PacketEncoder: Clone {
+    type Transmission: EncodedSamples;
+    fn encode_packet(&self, record: &PacketRecord) -> RadioResult<Self::Transmission>;
+}
 
 /// One decoder-supported legacy Wi-Fi PHY selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,13 +182,31 @@ pub trait EncodedWifiTransmission: Clone {
     fn mac_bytes(&self) -> &[u8];
     fn psdu_bytes(&self) -> &[u8];
     fn cs8(&self) -> &[i8];
+    fn encoded_sample_rate_hz(&self) -> u32 {
+        20_000_000
+    }
 
     fn sample_count(&self) -> usize {
         self.cs8().len() / 2
     }
 }
 
+impl<T: EncodedWifiTransmission> EncodedSamples for T {
+    fn samples_cs8(&self) -> &[i8] {
+        self.cs8()
+    }
+    fn sample_rate_hz(&self) -> u32 {
+        EncodedWifiTransmission::encoded_sample_rate_hz(self)
+    }
+}
+
 impl EncodedWifiTransmission for LegacyWifiTransmission {
+    fn encoded_sample_rate_hz(&self) -> u32 {
+        match self {
+            Self::Ofdm(tx) => tx.sample_rate_hz,
+            Self::DsssCck(tx) => tx.sample_rate_hz,
+        }
+    }
     fn mac_bytes(&self) -> &[u8] {
         self.mac_bytes()
     }
@@ -132,6 +221,9 @@ impl EncodedWifiTransmission for LegacyWifiTransmission {
 }
 
 impl EncodedWifiTransmission for HtTransmission {
+    fn encoded_sample_rate_hz(&self) -> u32 {
+        self.sample_rate_hz
+    }
     fn mac_bytes(&self) -> &[u8] {
         &self.mac_bytes
     }
@@ -190,18 +282,30 @@ impl WifiTxEncoder for HtTxConfig {
     }
 }
 
-/// Backend contract for already encoded, owned Wi-Fi IQ.
-pub trait IqSink<T: EncodedWifiTransmission = LegacyWifiTransmission> {
+/// Backend contract for encoded samples, independent of packet protocol.
+pub trait IqSink<T: EncodedSamples = LegacyWifiTransmission> {
     fn write(&mut self, transmission: &T) -> RadioResult<()>;
+
+    /// Compatibility path: successful legacy writes establish acceptance only.
+    fn write_outcome(&mut self, transmission: &T) -> RadioResult<IqSinkOutcome> {
+        self.write(transmission)?;
+        Ok(IqSinkOutcome {
+            samples_requested: (transmission.samples_cs8().len() / 2) as u64,
+            samples_supplied: None,
+            padded_samples: 0,
+            completion: SampleCompletion::Unconfirmed,
+            live: None,
+        })
+    }
 }
 
 /// Deterministic sink retaining every accepted transmission.
 #[derive(Debug, Clone, Default)]
-pub struct MemoryIqSink<T: EncodedWifiTransmission = LegacyWifiTransmission> {
+pub struct MemoryIqSink<T: EncodedSamples = LegacyWifiTransmission> {
     transmissions: Vec<T>,
 }
 
-impl<T: EncodedWifiTransmission> MemoryIqSink<T> {
+impl<T: EncodedSamples> MemoryIqSink<T> {
     pub const fn new() -> Self {
         Self {
             transmissions: Vec::new(),
@@ -217,27 +321,42 @@ impl<T: EncodedWifiTransmission> MemoryIqSink<T> {
     }
 }
 
-impl<T: EncodedWifiTransmission> IqSink<T> for MemoryIqSink<T> {
+impl<T: EncodedSamples> IqSink<T> for MemoryIqSink<T> {
     fn write(&mut self, transmission: &T) -> RadioResult<()> {
+        transmission.validate_samples()?;
         self.transmissions.push(transmission.clone());
         Ok(())
     }
+    fn write_outcome(&mut self, transmission: &T) -> RadioResult<IqSinkOutcome> {
+        self.write(transmission)?;
+        let samples = (transmission.samples_cs8().len() / 2) as u64;
+        Ok(IqSinkOutcome {
+            samples_requested: samples,
+            samples_supplied: Some(samples),
+            padded_samples: 0,
+            completion: SampleCompletion::Stored,
+            live: Some(false),
+        })
+    }
 }
 
-/// Packet writer compiling a bare `Dot11` stack into one configured Wi-Fi waveform.
+/// Packet writer using a selected protocol codec and sample sink.
+/// Existing Wi-Fi configurations require a bare `Dot11` root.
 #[derive(Debug, Clone)]
-pub struct RadioPacketWriter<S, C: WifiTxEncoder = LegacyWifiTxConfig> {
+pub struct RadioPacketWriter<S, C: PacketEncoder = LegacyWifiTxConfig> {
     config: C,
     sink: S,
     last: Option<C::Transmission>,
+    last_outcome: Option<IqSinkOutcome>,
 }
 
-impl<S, C: WifiTxEncoder> RadioPacketWriter<S, C> {
+impl<S, C: PacketEncoder> RadioPacketWriter<S, C> {
     pub const fn new(config: C, sink: S) -> Self {
         Self {
             config,
             sink,
             last: None,
+            last_outcome: None,
         }
     }
 
@@ -260,14 +379,14 @@ impl<S, C: WifiTxEncoder> RadioPacketWriter<S, C> {
     pub fn into_sink(self) -> S {
         self.sink
     }
+    pub fn last_outcome(&self) -> Option<&IqSinkOutcome> {
+        self.last_outcome.as_ref()
+    }
 }
 
-impl<S, C> RadioPacketWriter<S, C>
-where
-    C: WifiTxEncoder,
-    S: IqSink<C::Transmission>,
-{
-    pub fn encode_record(&self, record: &PacketRecord) -> RadioResult<C::Transmission> {
+impl<C: WifiTxEncoder> PacketEncoder for C {
+    type Transmission = C::Transmission;
+    fn encode_packet(&self, record: &PacketRecord) -> RadioResult<Self::Transmission> {
         if !record
             .packet()
             .get(0)
@@ -282,31 +401,65 @@ where
             .packet()
             .compile()
             .map_err(|error| RadioError::Source(error.to_string()))?;
-        self.config.encode_mac(compiled.as_bytes())
+        self.encode_mac(compiled.as_bytes())
+    }
+}
+
+impl<S, C> RadioPacketWriter<S, C>
+where
+    C: PacketEncoder,
+    S: IqSink<C::Transmission>,
+{
+    pub fn encode_record(&self, record: &PacketRecord) -> RadioResult<C::Transmission> {
+        self.config.encode_packet(record)
     }
 }
 
 impl<S, C> PacketWriter for RadioPacketWriter<S, C>
 where
-    C: WifiTxEncoder,
+    C: PacketEncoder,
     S: IqSink<C::Transmission>,
 {
     fn write_record(&mut self, record: &PacketRecord) -> crate::wire::Result<WriteReport> {
+        self.last = None;
+        self.last_outcome = None;
+        let requested = record.packet().compile()?.as_bytes().len();
         let transmission = self
             .encode_record(record)
             .map_err(|error| WireError::backend("radio-iq", "encode", error.to_string()))?;
-        self.sink
-            .write(&transmission)
+        transmission
+            .validate_samples()
+            .map_err(|error| WireError::backend("radio-iq", "encode", error.to_string()))?;
+        let outcome = self
+            .sink
+            .write_outcome(&transmission)
             .map_err(|error| WireError::backend("radio-iq", "write", error.to_string()))?;
-        let requested = transmission.cs8().len();
-        let written = requested;
+        self.last_outcome = Some(outcome.clone());
         self.last = Some(transmission);
+        if matches!(
+            outcome.completion,
+            SampleCompletion::Incomplete | SampleCompletion::Cancelled
+        ) || outcome
+            .samples_supplied
+            .is_some_and(|n| n != outcome.samples_requested)
+        {
+            return Err(WireError::backend(
+                "radio-iq",
+                "write",
+                format!("sample submission failed: {outcome:?}"),
+            ));
+        }
         Ok(WriteReport::new(
             BackendKind::Other("radio-iq".into()),
             requested,
-            written,
-            true,
+            requested,
+            outcome.live == Some(false),
         )
-        .with_target_details("offline-cs8"))
+        .with_target_details(match outcome.live {
+            Some(false) => "memory-cs8",
+            Some(true) => "live-cs8",
+            None => "cs8",
+        })
+        .with_radio_outcome(outcome))
     }
 }

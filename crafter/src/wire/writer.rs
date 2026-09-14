@@ -31,6 +31,8 @@ pub struct WriteReport {
     bytes_written: usize,
     dry_run: bool,
     target_details: Option<String>,
+    #[cfg(feature = "radio")]
+    radio_outcome: Option<crate::radio::IqSinkOutcome>,
 }
 
 impl WriteReport {
@@ -47,12 +49,26 @@ impl WriteReport {
             bytes_written,
             dry_run,
             target_details: None,
+            #[cfg(feature = "radio")]
+            radio_outcome: None,
         }
     }
 
     /// Backend that handled the write.
     pub const fn backend(&self) -> &BackendKind {
         &self.backend
+    }
+
+    /// Sample transport evidence, separate from packet-byte acceptance.
+    #[cfg(feature = "radio")]
+    pub fn radio_outcome(&self) -> Option<&crate::radio::IqSinkOutcome> {
+        self.radio_outcome.as_ref()
+    }
+
+    #[cfg(feature = "radio")]
+    pub fn with_radio_outcome(mut self, outcome: crate::radio::IqSinkOutcome) -> Self {
+        self.radio_outcome = Some(outcome);
+        self
     }
 
     /// Number of bytes requested for output.
