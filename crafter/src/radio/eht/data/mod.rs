@@ -1,11 +1,12 @@
 //! EHT20 DATA timing, payload geometry, and IQ recovery.
 
-mod bcc;
+pub(in crate::radio::eht) mod bcc;
 mod capacity;
-mod ldpc;
+pub(in crate::radio::eht) mod ldpc;
 mod non_ofdma;
 mod ofdma;
 mod receiver;
+pub(in crate::radio::eht) mod resource;
 mod scrambler;
 mod timing;
 

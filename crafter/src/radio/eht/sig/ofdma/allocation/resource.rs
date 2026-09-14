@@ -106,6 +106,34 @@ impl EhtResourceUnit {
         Some(Self::ru(EhtRuComponent::new(EhtRuSize::Ru242, 1), users))
     }
 
+    /// Decode the EHT Trigger RU Allocation field for a 20 MHz response.
+    /// The low field bit is the primary-160 selector and must be zero here.
+    pub(in crate::radio) fn from_trigger_20(raw: u8) -> Option<Self> {
+        if raw & 1 != 0 {
+            return None;
+        }
+        let code = raw >> 1;
+        let component = |size, index| EhtRuComponent::new(size, index);
+        Some(match code {
+            0..=8 => Self::ru(component(EhtRuSize::Ru26, code + 1), 1),
+            37..=40 => Self::ru(component(EhtRuSize::Ru52, code - 36), 1),
+            53..=54 => Self::ru(component(EhtRuSize::Ru106, code - 52), 1),
+            61 => Self::ru(component(EhtRuSize::Ru242, 1), 1),
+            70 => Self::mru(component(EhtRuSize::Ru26, 2), component(EhtRuSize::Ru52, 2)),
+            71 => Self::mru(component(EhtRuSize::Ru52, 2), component(EhtRuSize::Ru26, 5)),
+            72 => Self::mru(component(EhtRuSize::Ru52, 3), component(EhtRuSize::Ru26, 8)),
+            82 => Self::mru(
+                component(EhtRuSize::Ru106, 1),
+                component(EhtRuSize::Ru26, 5),
+            ),
+            83 => Self::mru(
+                component(EhtRuSize::Ru26, 5),
+                component(EhtRuSize::Ru106, 2),
+            ),
+            _ => return None,
+        })
+    }
+
     pub(super) const fn ru(component: EhtRuComponent, users: u8) -> Self {
         Self {
             components: [component, component],

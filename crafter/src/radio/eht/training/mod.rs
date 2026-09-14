@@ -2,7 +2,7 @@
 
 mod layout;
 mod receiver;
-mod resource;
+pub(in crate::radio::eht) mod resource;
 #[cfg(test)]
 mod tests;
 

@@ -4,6 +4,7 @@
 pub(in crate::radio) mod data;
 pub(in crate::radio) mod iq;
 mod sig;
+pub(in crate::radio) mod tb;
 #[cfg(test)]
 mod test_support;
 pub(in crate::radio) mod training;

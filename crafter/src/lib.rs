@@ -149,10 +149,10 @@ pub use packet::{
 pub use protocols::exports::*;
 #[cfg(feature = "radio")]
 pub use radio::{
-    DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, HtCoding, HtFormat, HtGuardInterval,
-    HeSigBCodedError, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext,
-    HeMuSigBFields, HeMuSignalFields, HeRu20Assignment, HeSigBUserEncoding, HeSigBUserFields,
-    HeSignalError, HeSuSignalFields, HeTbSignalError, HeTbSignalFields, HtMcs, HtSignalBits,
+    DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, HeMuSigBFields, HeMuSignalFields,
+    HeRu20Assignment, HeSigBCodedError, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock,
+    HeSigBUserContext, HeSigBUserEncoding, HeSigBUserFields, HeSignalError, HeSuSignalFields,
+    HeTbSignalError, HeTbSignalFields, HtCoding, HtFormat, HtGuardInterval, HtMcs, HtSignalBits,
     HtSignalError, HtSignalFields, HtTransmission, HtTxConfig, IqSink, LegacyDsssCckRate,
     LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission,
     LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink,

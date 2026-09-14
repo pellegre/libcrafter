@@ -186,9 +186,26 @@ impl Receiver {
                     if user.capacity.psdu_bytes > max_psdu {
                         return Err(Error::FrameLimit);
                     }
-                    let metrics =
-                        super::iq::Demodulator::new(samples, acquisition, &admission, user)?
-                            .recover()?;
+                    let channel = admission
+                        .trained
+                        .resources
+                        .get(user.resource_index)
+                        .and_then(|resource| resource.channel.as_ref())
+                        .ok_or(Error::Training)?;
+                    let metrics = super::super::resource::Demodulator::new(
+                        samples,
+                        acquisition,
+                        admission.required_samples,
+                        user.resource,
+                        channel,
+                        user.capacity,
+                        user.info.data_start,
+                        admission.trained.guard,
+                        admission.timing.data_symbols,
+                        admission.timing.symbol_samples,
+                        4 + admission.trained.signal.symbols,
+                    )?
+                    .recover()?;
                     let (psdu, failed_codewords, first_failure) = if user.capacity.ldpc {
                         let SignalFields::Ofdma(signal) = &admission.trained.signal.signal else {
                             return Err(Error::UnsupportedFormat);

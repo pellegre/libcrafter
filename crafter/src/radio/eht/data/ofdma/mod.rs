@@ -1,6 +1,5 @@
 //! EHT20 downlink OFDMA DATA recovery by independently decodable resource.
 
-mod iq;
 mod receiver;
 #[cfg(test)]
 mod tests;

@@ -1,4 +1,5 @@
 use super::Error;
+use crate::protocols::link::{Dot11EhtTriggerCommonFields, Dot11EhtTriggerUserFields};
 use crate::radio::eht::{
     sig::iq::SignalFields, EhtNonMuUser, EhtNonOfdmaUsers, EhtOfdmaCommon, EhtResourceUnit,
     EhtRuSize,
@@ -144,6 +145,46 @@ impl Capacity {
             Geometry::for_resource(resource, modulation.dcm)?,
             common.pre_fec_padding_factor,
             common.ldpc_extra_symbol,
+            symbols,
+        )
+    }
+
+    /// Construct one independently decodable EHT-TB user's RU or MRU geometry.
+    pub fn for_tb(
+        common: &Dot11EhtTriggerCommonFields,
+        fields: &Dot11EhtTriggerUserFields,
+        resource: EhtResourceUnit,
+        symbols: usize,
+    ) -> Result<Self, Error> {
+        let stream_start = fields.spatial_allocation & 7;
+        let stream_count = (fields.spatial_allocation >> 3) + 1;
+        if resource.user_count() != 1
+            || stream_start != 0
+            || stream_count != 1
+            || fields.reserved
+            || fields.ps160
+        {
+            return Err(Error::UnsupportedFormat);
+        }
+        let user = EhtNonMuUser {
+            sta_id: fields.aid12,
+            mcs: fields.mcs,
+            reserved: fields.reserved,
+            space_time_streams: stream_count,
+            beamformed: false,
+            ldpc: fields.ldpc,
+        };
+        let modulation = Modulation::new(user.mcs)?;
+        let padding = match common.pre_fec_padding_raw {
+            0 => 4,
+            value => value,
+        };
+        Self::for_user(
+            &user,
+            modulation,
+            Geometry::for_resource(resource, modulation.dcm)?,
+            padding,
+            common.ldpc_extra_segment,
             symbols,
         )
     }

@@ -1,6 +1,6 @@
 use crate::radio::{eht::EhtResourceUnit, resource_unit::Tones, sync::Acquisition, ComplexSample};
 
-pub(super) fn train(
+pub(in crate::radio::eht) fn train(
     samples: &[ComplexSample],
     acquisition: &Acquisition,
     resource: EhtResourceUnit,

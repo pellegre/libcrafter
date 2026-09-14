@@ -1,4 +1,5 @@
 use super::{Capacity, Error};
+use crate::protocols::link::{Dot11EhtTriggerCommonFields, Dot11EhtTriggerUserFields};
 use crate::radio::eht::data::scrambler::Descrambler;
 use crate::radio::{
     eht::{EhtNonMuUser, EhtOfdmaCommon, EhtResourceUnit},
@@ -8,14 +9,14 @@ use crate::radio::{
 #[cfg(test)]
 mod tests;
 
-pub(super) struct Recovered {
+pub(in crate::radio::eht) struct Recovered {
     pub psdu: Vec<u8>,
     pub failed_codewords: usize,
     pub first_failure: Option<rate::Error>,
 }
 
 /// One admitted EHT20 LDPC stream and its rate-matching layout.
-pub(super) struct Decoder {
+pub(in crate::radio::eht) struct Decoder {
     layout: Layout,
     capacity: Capacity,
     symbols: usize,
@@ -40,6 +41,23 @@ impl Decoder {
         symbols: usize,
     ) -> Result<Self, Error> {
         let layout = Layout::eht_ofdma(
+            common,
+            user,
+            resource,
+            u16::try_from(symbols).map_err(|_| Error::Overflow)?,
+        )
+        .map_err(Error::Ldpc)?;
+        Self::new(layout, capacity, symbols)
+    }
+
+    pub fn for_tb(
+        common: &Dot11EhtTriggerCommonFields,
+        user: &Dot11EhtTriggerUserFields,
+        resource: EhtResourceUnit,
+        capacity: Capacity,
+        symbols: usize,
+    ) -> Result<Self, Error> {
+        let layout = Layout::eht_tb(
             common,
             user,
             resource,

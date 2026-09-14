@@ -527,6 +527,58 @@ impl Layout {
         )
     }
 
+    /// EHT-TB applies the EHT LDPC rate matcher to the Trigger-selected RU.
+    pub(in crate::radio) fn eht_tb(
+        common: &crate::protocols::link::Dot11EhtTriggerCommonFields,
+        user: &crate::protocols::link::Dot11EhtTriggerUserFields,
+        resource: crate::radio::eht::EhtResourceUnit,
+        symbols: u16,
+    ) -> Result<Self, Error> {
+        use crate::radio::eht::data::Capacity;
+
+        let symbols = usize::from(symbols);
+        if !user.ldpc || symbols == 0 || symbols > 400 {
+            return Err(Error::EhtTiming);
+        }
+        let c = Capacity::for_tb(common, user, resource, symbols).map_err(|_| Error::EhtTiming)?;
+        if !c.ldpc || c.tail_bits != 0 {
+            return Err(Error::EhtTiming);
+        }
+        let extra = common.ldpc_extra_segment;
+        let mut initial = *common;
+        let mut initial_symbols = symbols;
+        if extra {
+            if common.pre_fec_padding_raw == 1 {
+                initial.pre_fec_padding_raw = 0;
+                initial_symbols = symbols.checked_sub(1).ok_or(Error::EhtTiming)?;
+            } else {
+                initial.pre_fec_padding_raw = if common.pre_fec_padding_raw == 0 {
+                    3
+                } else {
+                    common.pre_fec_padding_raw - 1
+                };
+            }
+        }
+        initial.ldpc_extra_segment = false;
+        let initial_padding = if initial.pre_fec_padding_raw == 0 {
+            4
+        } else {
+            initial.pre_fec_padding_raw
+        };
+        let initial_c = Capacity::for_tb(&initial, user, resource, initial_symbols)
+            .map_err(|_| Error::EhtTiming)?;
+        Self::from_segment_capacities(
+            c.into(),
+            initial_c.into(),
+            symbols,
+            1,
+            extra,
+            initial_padding,
+            HeExtraPolicy::Signaled,
+            Error::EhtTiming,
+        )
+    }
+
     fn from_segment_capacities(
         c: SegmentCapacity,
         initial_c: SegmentCapacity,

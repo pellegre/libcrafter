@@ -4,7 +4,7 @@ use super::{scrambler::Descrambler, Capacity, Error};
 mod tests;
 
 /// Recover one admitted EHT20 BCC payload from deinterleaved soft metrics.
-pub(super) fn recover(
+pub(in crate::radio::eht) fn recover(
     capacity: Capacity,
     symbols: usize,
     metrics: &[f32],

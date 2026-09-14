@@ -36,6 +36,10 @@ struct Pending {
 
 enum EhtStage {
     Prefix,
+    Tb {
+        context: eht::tb::context::Context,
+        required: usize,
+    },
     Signal(usize),
     Training {
         required: usize,
@@ -268,6 +272,7 @@ pub struct LegacyOfdmDecoder {
     // RxConfig between internal slices would discard an in-flight PPDU.
     output_allowance: Option<usize>,
     triggers: std::collections::VecDeque<he::tb::context::Context>,
+    eht_triggers: std::collections::VecDeque<eht::tb::context::Context>,
 }
 impl LegacyOfdmDecoder {
     pub fn new() -> Self {
@@ -401,6 +406,13 @@ impl LegacyOfdmDecoder {
             return;
         };
         let end = carrier.packet_end();
+        if let Ok(context) = eht::tb::context::Context::from_frame(frame, end) {
+            self.eht_triggers.retain(|trigger| !trigger.expired(end));
+            if self.eht_triggers.len() == 16 {
+                self.eht_triggers.pop_front();
+            }
+            self.eht_triggers.push_back(context);
+        }
         let Some(context) = he::tb::context::Context::from_frame(frame, carrier) else {
             return;
         };
@@ -409,6 +421,81 @@ impl LegacyOfdmDecoder {
             self.triggers.pop_front();
         }
         self.triggers.push_back(context);
+    }
+
+    fn publish_eht_tb(
+        &mut self,
+        p: Pending,
+        context: eht::tb::context::Context,
+        config: &RxConfig,
+        out: &mut DecodeOutput,
+    ) -> RadioResult<()> {
+        for allocation in context.schedule.allocations().filter(|user| user.eligible) {
+            let admitted = eht::tb::data::Receiver::admit(
+                &p.samples,
+                &p.acquisition,
+                &context.trigger.common,
+                &context.trigger.special.fields,
+                &allocation.fields,
+                allocation.resource,
+                usize::MAX,
+                p.samples.len(),
+            );
+            let recovered = match admitted.and_then(|admission| {
+                eht::tb::data::Receiver::recover(
+                    admission,
+                    &p.samples,
+                    &p.acquisition,
+                    usize::MAX,
+                    true,
+                )
+            }) {
+                Ok(recovered) => recovered,
+                Err(error) => {
+                    self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                    out.diagnostics.push(match error {
+                        eht::tb::data::Error::Unsupported | eht::tb::data::Error::Limit => {
+                            PhyDiagnostic::UnsupportedPhy
+                        }
+                        _ => PhyDiagnostic::InvalidHeader,
+                    });
+                    continue;
+                }
+            };
+            let mut diagnostics = vec![
+                PhyDiagnostic::Ofdm {
+                    frequency_offset_hz: p.acquisition.frequency_rad * 20_000_000.
+                        / std::f32::consts::TAU,
+                    training_correlation: p.acquisition.correlation,
+                },
+                PhyDiagnostic::EhtTbUser {
+                    common: context.trigger.common,
+                    user: allocation.fields,
+                    resource: allocation.resource,
+                    user_index: allocation.user_index,
+                    trigger_preamble_sample_index: context.trigger_start,
+                    preamble_sample_index: p.start.sample_index,
+                },
+            ];
+            append_ldpc_diagnostics(
+                recovered.failed_codewords,
+                recovered.first_failure,
+                &mut diagnostics,
+                out,
+            );
+            let frame = RecoveredFrame {
+                bytes: recovered.psdu,
+                link_type: LinkType::Ieee80211,
+                integrity: FrameIntegrity::ValidFcs,
+                config: config.clone(),
+                start: p.start.clone(),
+                end_sample_index: recovered.admission.info.end_sample_index,
+                rate_bps: recovered.admission.info.rate_bps,
+                diagnostics,
+            };
+            self.publish_psdu(frame, Some(Aggregation::Eht), None, out)?;
+        }
+        Ok(())
     }
 
     fn publish_eht(
@@ -760,6 +847,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
         }
         self.sync.reset();
         self.triggers.clear();
+        self.eht_triggers.clear();
         self.continuity.reset();
         self.terminal = matches!(reason, ResetReason::End(_));
         out.diagnostics.push(PhyDiagnostic::Reset(reason));
@@ -799,6 +887,19 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     continue;
                 };
                 p.samples.push(sample);
+                if let Some(EhtStage::Tb { required, .. }) = p.eht.as_ref() {
+                    if p.samples.len() == *required {
+                        let mut p = self.pending[slot].take().unwrap();
+                        let Some(EhtStage::Tb { context, .. }) = p.eht.take() else {
+                            unreachable!()
+                        };
+                        if let Err(error) = self.publish_eht_tb(p, context, config, &mut out) {
+                            self.reset(ResetReason::Explicit);
+                            return Err(error);
+                        }
+                    }
+                    continue;
+                }
                 if let Some((_, required)) = &p.tb {
                     if p.samples.len() == *required {
                         let p = self.pending[slot].take().unwrap();
@@ -1128,6 +1229,55 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             fields: prefix.fields,
                             preamble_sample_index: p.start.sample_index,
                         });
+                        if matches!(prefix.fields.format, eht::EhtUsigFormat::TriggerBased(_)) {
+                            let budget = config
+                                .max_buffer_samples
+                                .saturating_sub(reserved)
+                                .saturating_add(p.samples.capacity());
+                            let candidate =
+                                self.eht_triggers
+                                    .iter()
+                                    .rev()
+                                    .find(|context| context.matches(p.start.sample_index, &prefix))
+                                    .and_then(|context| {
+                                        context
+                                            .schedule
+                                            .allocations()
+                                            .filter(|allocation| allocation.eligible)
+                                            .find_map(|allocation| {
+                                                eht::tb::data::Receiver::admit(
+                                                    &p.samples,
+                                                    &p.acquisition,
+                                                    &context.trigger.common,
+                                                    &context.trigger.special.fields,
+                                                    &allocation.fields,
+                                                    allocation.resource,
+                                                    usize::MAX,
+                                                    budget,
+                                                )
+                                                .ok()
+                                                .map(|admission| {
+                                                    (
+                                                        context.clone(),
+                                                        admission.required_samples,
+                                                        admission.info,
+                                                    )
+                                                })
+                                            })
+                                    });
+                            if let Some((context, required, info)) = candidate {
+                                if p.reserve_samples(required, config, reserved) {
+                                    p.info = Some(info);
+                                    p.eht = Some(EhtStage::Tb { context, required });
+                                    continue;
+                                }
+                            }
+                            out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                            self.stats.rejected_frames =
+                                self.stats.rejected_frames.saturating_add(1);
+                            self.pending[slot] = None;
+                            continue;
+                        }
                         match eht::SignalReceiver::recover(&p.samples, &p.acquisition) {
                             Err(eht::SignalIqError::Truncated { required, .. })
                                 if required > p.samples.len()

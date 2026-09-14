@@ -299,6 +299,15 @@ pub enum PhyDiagnostic {
         resource: EhtResourceUnit,
         preamble_sample_index: u64,
     },
+    /// Trigger parameters used for one independently recovered EHT-TB RU.
+    EhtTbUser {
+        common: crate::protocols::link::Dot11EhtTriggerCommonFields,
+        user: crate::protocols::link::Dot11EhtTriggerUserFields,
+        resource: EhtResourceUnit,
+        user_index: usize,
+        trigger_preamble_sample_index: u64,
+        preamble_sample_index: u64,
+    },
     /// Trigger parameters used for this RU. Matching is not BSS authentication.
     HeTbUser {
         common: crate::Dot11TriggerCommonFields,
@@ -468,6 +477,24 @@ impl PartialEq for PhyDiagnostic {
                     preamble_sample_index: f,
                 },
             ) => a == d && b == e && c == f,
+            (
+                Self::EhtTbUser {
+                    common: a,
+                    user: b,
+                    resource: c,
+                    user_index: d,
+                    trigger_preamble_sample_index: e,
+                    preamble_sample_index: f,
+                },
+                Self::EhtTbUser {
+                    common: g,
+                    user: h,
+                    resource: i,
+                    user_index: j,
+                    trigger_preamble_sample_index: k,
+                    preamble_sample_index: l,
+                },
+            ) => a == g && b == h && c == i && d == j && e == k && f == l,
             (
                 Self::HeTbUser {
                     common: a,
