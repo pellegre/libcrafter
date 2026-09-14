@@ -111,7 +111,10 @@ fn ht20_uses_the_same_packet_writer_and_iq_sink() {
     assert_eq!(transmission.mcs, HtMcs::Mcs7);
     assert_eq!(transmission.guard_interval, HtGuardInterval::Short);
     assert_eq!(report.bytes_written(), transmission.cs8.len());
-    assert_eq!(writer.sink().transmissions(), &[transmission.clone()]);
+    assert_eq!(
+        writer.sink().transmissions(),
+        std::slice::from_ref(transmission)
+    );
 
     let writer = RadioPacketWriter::new(
         HtTxConfig::new(HtMcs::Mcs5).with_coding(HtCoding::Ldpc),
