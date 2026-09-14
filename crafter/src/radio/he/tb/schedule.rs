@@ -1,7 +1,7 @@
 //! HE20 Trigger allocation geometry, ax-2021 9.3.1.22.1 and26.5.4.2.
 //! No exchange association, spatial separation or DATA integrity is inferred.
 use crate::radio::he::ru::Tones;
-use crate::{Dot11Trigger, Dot11TriggerRemainder, Dot11TriggerUserFields};
+use crate::{Dot11Trigger, Dot11TriggerRemainder, Dot11TriggerUserFields, Dot11TrsControl};
 
 // Explicit receiver resource bound, not a general MAC parser restriction.
 const MAX_ALLOCATIONS: usize = 16;
@@ -30,6 +30,34 @@ pub(in crate::radio) struct Schedule {
 }
 
 impl Schedule {
+    pub fn from_trs(control: Dot11TrsControl, dcm: bool) -> Result<Self, Error> {
+        if control.reserved() || (dcm && control.mcs() == 2) {
+            return Err(Error::Unsupported);
+        }
+        let tones = Tones::from_trigger(0, control.ru_allocation()).ok_or(Error::Ru)?;
+        let allocation = Allocation {
+            user_index: 0,
+            fields: Dot11TriggerUserFields {
+                aid12: 1,
+                ru_allocation: control.ru_allocation(),
+                ldpc: false,
+                mcs: control.mcs(),
+                dcm,
+                spatial_allocation: 0,
+                target_receive_power: control.target_receive_power(),
+                reserved: false,
+            },
+            eligible: true,
+            tones,
+        };
+        let mut allocations = [None; MAX_ALLOCATIONS];
+        allocations[0] = Some(allocation);
+        Ok(Self {
+            allocations,
+            len: 1,
+        })
+    }
+
     pub fn from_trigger(trigger: &Dot11Trigger) -> Result<Self, Error> {
         if trigger.common.bandwidth != 0 || !matches!(trigger.common.trigger_type, 0..=2 | 4..=6) {
             return Err(Error::Unsupported);
@@ -187,6 +215,46 @@ mod tests {
             vec![(0, 0, true), (0, 2, true), (1, 4, true)]
         );
         assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn radio_he_tb_schedule_from_trs_control() {
+        let control = Dot11TrsControl::new()
+            .with_ul_data_symbols_raw(9)
+            .with_ru_allocation(106)
+            .with_target_receive_power(27)
+            .with_mcs(3);
+        let schedule = Schedule::from_trs(control, true).unwrap();
+        let allocation = schedule.allocations().next().unwrap();
+        assert_eq!(allocation.user_index, 0);
+        assert!(allocation.eligible);
+        assert_eq!(
+            allocation.fields,
+            Dot11TriggerUserFields {
+                aid12: 1,
+                ru_allocation: 106,
+                ldpc: false,
+                mcs: 3,
+                dcm: true,
+                spatial_allocation: 0,
+                target_receive_power: 27,
+                reserved: false,
+            }
+        );
+        assert!(schedule.allocations().nth(1).is_none());
+
+        assert!(matches!(
+            Schedule::from_trs(control.with_reserved(true), false),
+            Err(Error::Unsupported)
+        ));
+        assert!(matches!(
+            Schedule::from_trs(control.with_mcs(2), true),
+            Err(Error::Unsupported)
+        ));
+        assert!(matches!(
+            Schedule::from_trs(control.with_ru_allocation(u8::MAX), false),
+            Err(Error::Ru)
+        ));
     }
 
     #[test]

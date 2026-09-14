@@ -22,6 +22,9 @@ behaviors:
   - name: he-su-trigger-carrier
     source: IEEE 802.11ax-2021 26.5.2.2.1, 26.5.2.3.3, 27.3
     checks: [he_su_and_er_su_trigger_context, bcc_ldpc_and_dcm_carrier, bss_color_match, stbc_does_not_seed_context]
+  - name: trs-control-context
+    source: IEEE 802.11ax-2021 9.2.4.6a.1, 26.5.2.2, 26.5.2.3.4, and 27.3.12.5.4
+    checks: [he_carrier_only, individual_address, ru_and_mcs, carrier_dcm, carrier_bss_color, derived_ltf_and_guard, one_ltf, bcc_for_he20_ru, fixed_spatial_reuse, fixed_sig_a2_reserved, ul_data_symbols, packet_extension_disambiguation, invalid_context_rejection]
   - name: tb-user-iq
     source: IEEE 802.11ax-2021 27.3.10, 27.3.11.10, 27.3.12.5.5, Equation 27-111
     checks: [matching_trigger_fields, bounded_timing, header_only_admission, isolated_ru_training, per_user_pilot_phase, bcc_ldpc_psdu, midamble_refresh, service_integrity, simultaneous_disjoint_ru_users]
@@ -35,7 +38,7 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Bounded streaming reception uses FCS-valid Trigger context to publish only FCS-valid response MPDUs. Full-RU MCS11 STBC includes balanced positive captures and near/far CS8 captures whose post-quantization symbols remain rejection controls; valid FEC, SERVICE, and MPDU FCS are never relaxed. HT/VHT/HE carrier and simultaneous-user exchanges extend the offline contract, not live qualification.
+      - Bounded streaming reception uses FCS-valid Trigger or HE-carried TRS Control context to publish only FCS-valid response MPDUs. Full-RU MCS11 STBC includes balanced positive captures and near/far CS8 captures whose post-quantization symbols remain rejection controls; valid FEC, SERVICE, and MPDU FCS are never relaxed. HT/VHT/HE carrier and simultaneous-user exchanges extend the offline contract, not live qualification.
       - Isolated per-user kernel is checked against 282 independent waveforms, including SERVICE rejection and sample/payload bounds.
       - The isolated per-user kernel requires explicit caller-established Trigger association and one-DATA-stream user context. It does not perform spatial separation or automatic exchange matching.
       - Header-only admission checks explicit Trigger context, per-user geometry and retained-sample/payload limits before DATA buffering; aggregate scanning and per-MPDU FCS validation remain the streaming publisher's responsibility.

@@ -4,6 +4,30 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_tb_trs_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-trs-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 13);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "64adf6e715b9e0b84dbeffe25704645f62ff18bebbd3336b1e7c3a7e03baa53d"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 16);
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[14].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[15]);
+        assert_eq!(c[12] == "-", !c[1].starts_with("clean"));
+        assert!(c[13].parse::<u8>().unwrap() <= 32);
+    }
+}
+
+#[test]
 fn radio_he_tb_he_exchange_inventory() {
     let rows = include_str!("fixtures/iq/he-tb-he-exchange-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 12);

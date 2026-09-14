@@ -27,7 +27,7 @@ from he_ldpc_rate_vectors import layout, encode_information, damage_codeword, RA
 def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage='none',mac_payloads=None,
              compressed=False,sig_b_mcs=0,sig_b_dcm=False,stbc=False,stbc_case='flat',
              user_modes=None,pre_fec_padding=3,sizing_trace=None,tb_ru=None,
-             tb_user_number=0,return_complex=False,bss_color=37):
+             tb_user_number=0,return_complex=False,bss_color=37,tb_spatial_reuse=None):
     assert 0 <= bss_color < 64
     assert not compressed or code==192
     assert sig_b_mcs in range(6) and (not sig_b_dcm or sig_b_mcs in (0,1,3,4))
@@ -140,7 +140,9 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
     if period==20:header[36]=1
     if tb_ru is not None:
         from he_tb_signal_vectors import header as tb_header
-        header=tb_header(0,bss_color,[0]*4,0,511)
+        reuse=[0]*4 if tb_spatial_reuse is None else tb_spatial_reuse
+        assert len(reuse)==4 and all(0<=value<16 for value in reuse)
+        header=tb_header(0,bss_color,reuse,0,511)
     repair(header);siga=encoded(header)
     if sizing_trace is not None:
         sizing_trace.update(length=length,padding=final_padding)
