@@ -14,12 +14,12 @@ from pathlib import Path
 
 import tools.oracle.engine.backends.wifi.ofdm.base as base
 import tools.oracle.engine.backends.wifi.he.training as training
-from tools.oracle.engine.backends.wifi.eht.ofdma.allocation import (
+from tools.oracle.engine.backends.wifi.eht.signal.ofdma.allocation import (
     ALLOCATIONS,
     component_tones,
 )
 from tools.oracle.engine.backends.wifi.eht.signal.fields import protected
-from tools.oracle.engine.backends.wifi.eht.signal.iq import (
+from tools.oracle.engine.backends.wifi.eht.signal.waveform import (
     MODES,
     append_training,
     prefix,

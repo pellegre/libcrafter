@@ -4,22 +4,25 @@ import argparse
 import cmath
 import hashlib
 import math
-from pathlib import Path
-from tools.oracle.engine.backends.wifi.paths import IQ_FIXTURES
 import tempfile
+from pathlib import Path
 
 import tools.oracle.engine.backends.wifi.ofdm.base as base
-from tools.oracle.engine.backends.wifi.eht.ofdma.allocation import ALLOCATIONS
-from tools.oracle.engine.backends.wifi.eht.signal.iq import (
+from tools.oracle.engine.backends.wifi.eht.signal.ofdma.allocation import ALLOCATIONS
+from tools.oracle.engine.backends.wifi.eht.signal.fields import (
+    OFDMA_USERS,
+    ofdma_blocks,
+    repair_block,
+    split_ofdma_blocks,
+)
+from tools.oracle.engine.backends.wifi.eht.signal.waveform import (
     MODES,
     append_training,
     prefix,
-    repair_block,
     signaling,
-    split_ofdma_blocks,
 )
-from tools.oracle.engine.backends.wifi.eht.signal.fields import OFDMA_USERS, ofdma_blocks
 from tools.oracle.engine.backends.wifi.eht.usig import mu_header, put
+from tools.oracle.engine.backends.wifi.paths import IQ_FIXTURES
 
 
 OUT = IQ_FIXTURES
@@ -97,27 +100,34 @@ def generate(out):
             ) = fields
             offset = len(corpus)
             corpus.extend(iq)
-            rows.append("\t".join(map(str, [
-                name,
-                usig,
-                bits,
-                allocation,
-                len(resources),
-                OFDMA_USERS[allocation],
-                supported,
-                raw_mcs,
-                signal_symbols,
-                ltf_mode,
-                ltf_size,
-                guard,
-                ltf_symbols,
-                ltf_start,
-                data_start,
-                int(impaired),
-                offset,
-                len(iq),
-                hashlib.sha256(iq).hexdigest(),
-            ])))
+            rows.append(
+                "\t".join(
+                    map(
+                        str,
+                        [
+                            name,
+                            usig,
+                            bits,
+                            allocation,
+                            len(resources),
+                            OFDMA_USERS[allocation],
+                            supported,
+                            raw_mcs,
+                            signal_symbols,
+                            ltf_mode,
+                            ltf_size,
+                            guard,
+                            ltf_symbols,
+                            ltf_start,
+                            data_start,
+                            int(impaired),
+                            offset,
+                            len(iq),
+                            hashlib.sha256(iq).hexdigest(),
+                        ],
+                    )
+                )
+            )
     (out / "eht-ofdma-training-iq-index.tsv").write_text("\n".join(rows) + "\n")
     (out / "eht-ofdma-training-iq.cs8").write_bytes(corpus)
     print(f"{len(rows) - 1} independent EHT20 OFDMA training waveforms")

@@ -14,14 +14,12 @@ from tools.oracle.engine.backends.wifi.eht.data.ofdma.bcc import (
     PILOT_SIGNS,
     tones,
 )
-from tools.oracle.engine.backends.wifi.eht.ofdma.allocation import ALLOCATIONS
-from tools.oracle.engine.backends.wifi.eht.signal.fields import (
-    DATA_MODES,
-    data_ldpc_encode,
-    eht_scramble,
-    protected,
-)
-from tools.oracle.engine.backends.wifi.eht.signal.iq import (
+from tools.oracle.engine.backends.wifi.eht.signal.ofdma.allocation import ALLOCATIONS
+from tools.oracle.engine.backends.wifi.eht.data.non_ofdma.ldpc import encode as ldpc_encode
+from tools.oracle.engine.backends.wifi.eht.data.non_ofdma.model import MODES as DATA_MODES
+from tools.oracle.engine.backends.wifi.eht.data.non_ofdma.model import scramble
+from tools.oracle.engine.backends.wifi.eht.signal.fields import protected
+from tools.oracle.engine.backends.wifi.eht.signal.waveform import (
     MODES,
     append_training,
     prefix,
@@ -207,7 +205,7 @@ def encode_payload(component, mcs, layout, psdu, seed):
     assert len(psdu) == layout["psdu_bytes"]
     information = [0] * 16 + base.bits(psdu)
     information += [(seed + index) & 1 for index in range(layout["phy_pad"])]
-    fec = data_ldpc_encode(eht_scramble(information, seed), layout["sizing"], mcs)
+    fec = ldpc_encode(scramble(information, seed), layout["sizing"], mcs)
     output = []
     cursor = 0
     for symbol in range(layout["symbols"]):

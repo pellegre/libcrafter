@@ -96,7 +96,7 @@ fn radio_eht_ofdma_data_bcc_iq_independent_inventory() {
     let generator = include_bytes!("../../tools/oracle/engine/backends/wifi/eht/data/ofdma/bcc.py");
     assert_eq!(
         hex(&Sha256::digest(generator)),
-        "f80ba484bdd799f1b4057f0e1fd7dafb66b6dbd8ce5d9c4751e55c8431ad3e1d"
+        "76c8bbbe472e2796a808a98319fdc7bcac1cdfbcda1bd6ee076c444dbc072840"
     );
 
     let rows = include_str!("fixtures/iq/eht-ofdma-data-bcc-iq-index.tsv");
@@ -134,7 +134,7 @@ fn radio_eht_ofdma_data_ldpc_iq_independent_inventory() {
         include_bytes!("../../tools/oracle/engine/backends/wifi/eht/data/ofdma/ldpc.py");
     assert_eq!(
         hex(&Sha256::digest(generator)),
-        "5e75ce110c715e4e705f318f117fbe6d97497b34521b7fb4c0fe3a106060cf31"
+        "987bccd6ae9413389c9e5666301d7f47a9ed8a9ea19f43f8019b931db118040a"
     );
 
     let rows = include_str!("fixtures/iq/eht-ofdma-data-ldpc-iq-index.tsv");

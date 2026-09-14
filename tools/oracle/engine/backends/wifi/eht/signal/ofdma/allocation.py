@@ -6,12 +6,11 @@ They intentionally do not import the production Rust allocation table.
 
 import argparse
 from dataclasses import dataclass
+
 from tools.oracle.engine.backends.wifi.paths import IQ_FIXTURES
 
 
-OUT = (
-    IQ_FIXTURES / "eht-ofdma-ru-index.tsv"
-)
+OUT = IQ_FIXTURES / "eht-ofdma-ru-index.tsv"
 
 
 @dataclass(frozen=True)
@@ -106,8 +105,17 @@ ALLOCATIONS = {
 def component_tones(component):
     size, index = component.size, component.index
     ranges = {
-        26: [(-121, -96), (-95, -70), (-68, -43), (-42, -17),
-             (-16, -4, 4, 16), (17, 42), (43, 68), (70, 95), (96, 121)],
+        26: [
+            (-121, -96),
+            (-95, -70),
+            (-68, -43),
+            (-42, -17),
+            (-16, -4, 4, 16),
+            (17, 42),
+            (43, 68),
+            (70, 95),
+            (96, 121),
+        ],
         52: [(-121, -70), (-68, -17), (17, 68), (70, 121)],
         106: [(-122, -17), (17, 122)],
         242: [(-122, -2, 2, 122)],
@@ -125,7 +133,9 @@ def component_tones(component):
 
 def validate():
     assert len(ALLOCATIONS) == 58
-    assert set(ALLOCATIONS) == set(range(26)) | set(range(32, 56)) | set(range(64, 72))
+    assert set(ALLOCATIONS) == (
+        set(range(26)) | set(range(32, 56)) | set(range(64, 72))
+    )
     for code, resources in ALLOCATIONS.items():
         occupied = set()
         previous = -10_000
@@ -153,7 +163,14 @@ def validate():
         )
         assert len(occupied) == expected, (code, len(occupied), expected)
         assert len(occupied) <= 242
-    assert sum(component.size for resource in ALLOCATIONS[24] for component in resource.components) == 208
+    assert (
+        sum(
+            component.size
+            for resource in ALLOCATIONS[24]
+            for component in resource.components
+        )
+        == 208
+    )
 
 
 def generate():
@@ -171,12 +188,14 @@ def generate():
             + (f"@{resource.users}" if resource.users > 1 else "")
             for resource in resources
         )
-        occupied = len({
-            tone
-            for resource in resources
-            for component in resource.components
-            for tone in component_tones(component)
-        })
+        occupied = len(
+            {
+                tone
+                for resource in resources
+                for component in resource.components
+                for tone in component_tones(component)
+            }
+        )
         rows.append(f"{code}\tok\t{users}\t{kind}\t{encoded}\t{occupied}")
     return "\n".join(rows) + "\n"
 
