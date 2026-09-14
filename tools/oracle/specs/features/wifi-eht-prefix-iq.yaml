@@ -20,5 +20,5 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - The prefix primitive stops at U-SIG; supported single-user streams can continue into the separate EHT-SIG receiver, while training and DATA remain pending.
+      - The prefix primitive stops at U-SIG; supported streams continue through separate EHT-SIG, training and DATA receivers.
       - U-SIG may report a wider PPDU because pre-EHT signaling is duplicated into 20 MHz subchannels; wider DATA cannot be recovered from this capture.

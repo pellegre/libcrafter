@@ -1,7 +1,7 @@
 version: 1
 kind: feature
 name: wifi_eht_sig_iq
-summary: Non-OFDMA EHT-SIG content-channel recovery from 20 Msps IQ.
+summary: EHT-SIG content-channel recovery from 20 Msps IQ.
 layers: [dot11]
 directions: [backend_to_libcrafter]
 strict_bytes: true
@@ -20,5 +20,5 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - The receiver recovers complete 20 MHz non-OFDMA single-user and downlink MU-MIMO content channels.
-      - OFDMA, EHT training, EHT DATA and live qualification remain separate work.
+      - The receiver recovers complete 20 MHz non-OFDMA single-user, downlink MU-MIMO and OFDMA content channels.
+      - RU/MRU training and DATA plus live qualification remain separate work.
