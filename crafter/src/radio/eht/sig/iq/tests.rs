@@ -2,7 +2,7 @@ use super::*;
 use crate::radio::{
     eht::{
         test_support::{feed, fixture},
-        EhtNonMuUser, EhtNonOfdmaUsers,
+        EhtNonMuUser, EhtNonOfdmaUsers, EhtOfdmaUser,
     },
     PhyDiagnostic, WifiDecoder,
 };
@@ -302,10 +302,28 @@ fn radio_eht_ofdma_sig_iq_streaming_dispatch() {
             preamble_sample_index: 37,
         }));
         assert!(output.diagnostics.contains(&PhyDiagnostic::EhtOfdmaSignal {
-            fields: signal,
+            fields: signal.clone(),
             preamble_sample_index: 37,
         }));
-        assert!(output.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+        let mut cursor = 0usize;
+        let mut trainable = false;
+        for resource in signal.common.allocation.resources() {
+            if resource.user_count() == 1
+                && matches!(
+                    signal.users.get(cursor),
+                    Some(Ok(EhtOfdmaUser::NonMu(user))) if user.space_time_streams == 1
+                )
+            {
+                trainable = true;
+            }
+            cursor += usize::from(resource.user_count());
+        }
+        assert_eq!(
+            output.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy),
+            !trainable,
+            "{}: {output:?}",
+            columns[0]
+        );
         assert!(!output
             .diagnostics
             .iter()

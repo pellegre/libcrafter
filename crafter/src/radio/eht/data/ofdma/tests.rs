@@ -23,6 +23,14 @@ fn data_corpus() -> Vec<u8> {
     .unwrap()
 }
 
+fn ldpc_data_corpus() -> Vec<u8> {
+    std::fs::read(format!(
+        "{}/tests/fixtures/iq/eht-ofdma-data-ldpc-iq.cs8",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap()
+}
+
 fn bytes(hex: &str) -> Vec<u8> {
     hex.as_bytes()
         .chunks_exact(2)
@@ -248,6 +256,104 @@ fn radio_eht_ofdma_data_bcc_streams_each_raw_mpdu() {
             assert_eq!(
                 frame.end_sample_index,
                 columns[14].parse().unwrap(),
+                "{}",
+                columns[0]
+            );
+        }
+        assert!(
+            recovered_users.into_iter().all(|recovered| recovered),
+            "{}",
+            columns[0]
+        );
+    }
+}
+
+#[test]
+fn radio_eht_ofdma_data_ldpc_independent_iq_waveforms() {
+    let rows = include_str!("../../../../../tests/fixtures/iq/eht-ofdma-data-ldpc-iq-index.tsv");
+    let corpus = ldpc_data_corpus();
+    assert_eq!(rows.lines().skip(1).count(), 16);
+    for row in rows.lines().skip(1) {
+        let columns: Vec<_> = row.split('\t').collect();
+        let offset: usize = columns[19].parse().unwrap();
+        let length: usize = columns[20].parse().unwrap();
+        let (samples, acquisition) = fixture(&corpus[offset..offset + length]);
+        let input = &samples[acquisition.signal_start as usize..];
+        let signal = SignalReceiver::recover(input, &acquisition).expect(columns[0]);
+        let trained = training::Receiver::recover(input, &acquisition, signal).expect(columns[0]);
+        let admission = Receiver::admit(trained, usize::MAX, usize::MAX).expect(columns[0]);
+        assert_eq!(admission.required_samples, input.len(), "{}", columns[0]);
+        assert!(
+            admission
+                .users
+                .iter()
+                .filter_map(|user| user.as_ref().ok())
+                .all(|user| user.capacity.ldpc),
+            "{}",
+            columns[0]
+        );
+        let recovered =
+            Receiver::recover(admission, input, &acquisition, usize::MAX).expect(columns[0]);
+        let expected: Vec<_> = columns[6].split(';').map(bytes).collect();
+        assert_eq!(recovered.users.len(), expected.len(), "{}", columns[0]);
+        for (user, expected) in recovered.users.into_iter().zip(expected) {
+            let payload = user.unwrap_or_else(|error| panic!("{}: {error:?}", columns[0]));
+            assert_eq!(
+                payload.psdu, expected,
+                "{} user {}",
+                columns[0], payload.user_index
+            );
+            assert_eq!(payload.failed_codewords, 0, "{}", columns[0]);
+            assert_eq!(payload.first_failure, None, "{}", columns[0]);
+        }
+    }
+}
+
+#[test]
+fn radio_eht_ofdma_data_ldpc_streams_each_raw_mpdu() {
+    let rows = include_str!("../../../../../tests/fixtures/iq/eht-ofdma-data-ldpc-iq-index.tsv");
+    let corpus = ldpc_data_corpus();
+    for (index, row) in rows.lines().skip(1).enumerate() {
+        let columns: Vec<_> = row.split('\t').collect();
+        let offset: usize = columns[19].parse().unwrap();
+        let length: usize = columns[20].parse().unwrap();
+        let output = crate::radio::eht::test_support::feed(
+            &mut WifiDecoder::new(),
+            &corpus[offset..offset + length],
+            [1, 37, 128, 997][index % 4],
+        );
+        let expected: Vec<_> = columns[7].split(';').map(bytes).collect();
+        assert_eq!(
+            output.frames.len(),
+            expected.len(),
+            "{}: {output:?}",
+            columns[0]
+        );
+        let mut recovered_users = vec![false; expected.len()];
+        for frame in &output.frames {
+            let user_index = frame
+                .diagnostics
+                .iter()
+                .find_map(|diagnostic| match diagnostic {
+                    PhyDiagnostic::EhtOfdmaUser { user_index, .. } => Some(*user_index),
+                    _ => None,
+                })
+                .expect(columns[0]);
+            assert!(
+                user_index < expected.len(),
+                "{} user {user_index}",
+                columns[0]
+            );
+            assert!(
+                !recovered_users[user_index],
+                "{} duplicate user {user_index}",
+                columns[0]
+            );
+            recovered_users[user_index] = true;
+            assert_eq!(frame.bytes, expected[user_index], "{}", columns[0]);
+            assert_eq!(
+                frame.end_sample_index,
+                columns[17].parse().unwrap(),
                 "{}",
                 columns[0]
             );

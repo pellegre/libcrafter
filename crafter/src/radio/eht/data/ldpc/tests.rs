@@ -9,7 +9,7 @@ fn bits(text: &str) -> Vec<u8> {
 }
 
 fn fields() -> Fields {
-    let columns: Vec<_> = include_str!("../../../../../../tests/fixtures/iq/eht-sig-index.tsv")
+    let columns: Vec<_> = include_str!("../../../../../tests/fixtures/iq/eht-sig-index.tsv")
         .lines()
         .nth(1)
         .unwrap()
@@ -43,7 +43,7 @@ fn parameters(
 
 #[test]
 fn radio_eht_data_ldpc_independent_layouts() {
-    let rows = include_str!("../../../../../../tests/fixtures/iq/eht-data-ldpc-index.tsv");
+    let rows = include_str!("../../../../../tests/fixtures/iq/eht-data-ldpc-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 4_259);
     let mut coverage = [false; 6];
     for row in rows.lines().skip(1) {
@@ -135,7 +135,7 @@ fn radio_eht_data_ldpc_rejects_invalid_signaling() {
 
 #[test]
 fn radio_eht_data_ldpc_independent_payloads() {
-    let rows = include_str!("../../../../../../tests/fixtures/iq/eht-data-ldpc-payload-index.tsv");
+    let rows = include_str!("../../../../../tests/fixtures/iq/eht-data-ldpc-payload-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 120);
     for row in rows.lines().skip(1) {
         let columns: Vec<_> = row.split('\t').collect();
@@ -194,7 +194,7 @@ fn radio_eht_data_ldpc_independent_payloads() {
 #[test]
 fn radio_eht_data_ldpc_rejects_coding_metrics_and_service() {
     let columns: Vec<_> =
-        include_str!("../../../../../../tests/fixtures/iq/eht-data-ldpc-payload-index.tsv")
+        include_str!("../../../../../tests/fixtures/iq/eht-data-ldpc-payload-index.tsv")
             .lines()
             .nth(1)
             .unwrap()

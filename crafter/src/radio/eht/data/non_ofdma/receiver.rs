@@ -125,14 +125,12 @@ impl Receiver {
         }
         let metrics = super::iq::Demodulator::new(samples, acquisition, &admission)?.recover()?;
         let (psdu, failed_codewords, first_failure) = if admission.capacity.ldpc {
-            let recovered = super::ldpc::recover(
+            let recovered = super::super::ldpc::Decoder::for_non_ofdma(
                 &admission.trained.signal,
                 admission.capacity,
                 admission.timing.data_symbols,
-                &metrics,
-                max_psdu,
-                partial,
-            )?;
+            )?
+            .recover(&metrics, max_psdu, partial)?;
             (
                 recovered.psdu,
                 recovered.failed_codewords,

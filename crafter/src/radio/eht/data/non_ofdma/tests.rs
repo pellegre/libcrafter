@@ -123,10 +123,7 @@ fn radio_eht_data_timing_rejects_invalid_layouts() {
     fields.legacy_length = 4095;
     fields.symbols = usize::MAX;
     assert!(matches!(Timing::new(&fields), Err(Error::Overflow)));
-    assert!(matches!(
-        Timing::new(&ofdma()),
-        Err(Error::UnsupportedFormat)
-    ));
+    assert!(Timing::new(&ofdma()).is_ok());
 }
 
 #[test]

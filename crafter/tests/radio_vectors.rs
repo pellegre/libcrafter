@@ -129,6 +129,53 @@ fn radio_eht_ofdma_data_bcc_iq_independent_inventory() {
 }
 
 #[test]
+fn radio_eht_ofdma_data_ldpc_iq_independent_inventory() {
+    let generator =
+        include_bytes!("../../tools/oracle/engine/backends/wifi/eht/data/ofdma/ldpc.py");
+    assert_eq!(
+        hex(&Sha256::digest(generator)),
+        "5e75ce110c715e4e705f318f117fbe6d97497b34521b7fb4c0fe3a106060cf31"
+    );
+
+    let rows = include_str!("fixtures/iq/eht-ofdma-data-ldpc-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 16);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "594ce7576365b708903460e1acb2c0ce538f40eacd6c1558a59097d8619d3c5b"
+    );
+    let corpus = fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/iq/eht-ofdma-data-ldpc-iq.cs8"),
+    )
+    .unwrap();
+    assert_eq!(
+        hex(&Sha256::digest(&corpus)),
+        "019a377b483f2760fc5aa95fa5b9905bccd245b4662293a9f7ed45f86ba5911a"
+    );
+    let mut cursor = 0;
+    for row in rows.lines().skip(1) {
+        let columns: Vec<_> = row.split('\t').collect();
+        assert_eq!(columns.len(), 22);
+        assert!(matches!(columns[3], "0" | "24" | "25" | "64"));
+        let mcs: Vec<_> = columns[5]
+            .split(',')
+            .map(|value| value.parse::<u8>().unwrap())
+            .collect();
+        assert!(mcs.iter().all(|mcs| *mcs != 13));
+        if mcs.contains(&12) {
+            assert_eq!(columns[3], "64");
+            assert_eq!(columns[18], "0");
+        }
+        let offset: usize = columns[19].parse().unwrap();
+        let length: usize = columns[20].parse().unwrap();
+        assert_eq!(offset, cursor);
+        cursor += length;
+        assert_eq!(hex(&Sha256::digest(&corpus[offset..cursor])), columns[21]);
+    }
+    assert_eq!(cursor, corpus.len());
+}
+
+#[test]
 fn radio_he_tb_mu_carrier_exchange_inventory() {
     let rows = include_str!("fixtures/iq/he-tb-mu-carrier-exchange-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 5);

@@ -481,6 +481,52 @@ impl Layout {
         )
     }
 
+    /// EHT20 OFDMA applies the HE-style LDPC rate matcher independently to
+    /// each non-MU user over that user's allocated RU or MRU.
+    pub(in crate::radio) fn eht_ofdma(
+        common: &crate::radio::eht::EhtOfdmaCommon,
+        user: &crate::radio::eht::EhtNonMuUser,
+        resource: crate::radio::eht::EhtResourceUnit,
+        symbols: u16,
+    ) -> Result<Self, Error> {
+        use crate::radio::eht::data::Capacity;
+
+        let symbols = usize::from(symbols);
+        if !user.ldpc || symbols == 0 || symbols > 400 {
+            return Err(Error::EhtTiming);
+        }
+        let c =
+            Capacity::for_ofdma(common, user, resource, symbols).map_err(|_| Error::EhtTiming)?;
+        if !c.ldpc || c.tail_bits != 0 {
+            return Err(Error::EhtTiming);
+        }
+        let extra = common.ldpc_extra_symbol;
+        let mut initial = *common;
+        let mut initial_symbols = symbols;
+        if extra {
+            if common.pre_fec_padding_factor == 1 {
+                initial.pre_fec_padding_factor = 4;
+                initial_symbols = symbols.checked_sub(1).ok_or(Error::EhtTiming)?;
+            } else {
+                initial.pre_fec_padding_factor -= 1;
+            }
+        }
+        initial.ldpc_extra_symbol = false;
+        let initial_padding = initial.pre_fec_padding_factor;
+        let initial_c = Capacity::for_ofdma(&initial, user, resource, initial_symbols)
+            .map_err(|_| Error::EhtTiming)?;
+        Self::from_segment_capacities(
+            c.into(),
+            initial_c.into(),
+            symbols,
+            1,
+            extra,
+            initial_padding,
+            HeExtraPolicy::Required,
+            Error::EhtTiming,
+        )
+    }
+
     fn from_segment_capacities(
         c: SegmentCapacity,
         initial_c: SegmentCapacity,

@@ -1,6 +1,6 @@
 use super::super::{Capacity, Error, Timing};
 use crate::radio::{
-    eht::{training::Trained, EhtOfdmaUser, EhtResourceUnit, SignalFields},
+    eht::{training::Trained, EhtNonMuUser, EhtOfdmaUser, EhtResourceUnit, SignalFields},
     sync::Acquisition,
     ComplexSample, SignalInfo,
 };
@@ -9,6 +9,7 @@ pub(in crate::radio) struct UserAdmission {
     pub resource_index: usize,
     pub user_index: usize,
     pub resource: EhtResourceUnit,
+    pub user: EhtNonMuUser,
     pub capacity: Capacity,
     pub info: SignalInfo,
 }
@@ -109,9 +110,6 @@ impl Receiver {
                     }
                     let capacity =
                         Capacity::for_ofdma(&signal.common, user, resource, timing.data_symbols)?;
-                    if capacity.ldpc {
-                        return Err(Error::UnsupportedFormat);
-                    }
                     if capacity.psdu_bytes > max_psdu {
                         return Err(Error::FrameLimit);
                     }
@@ -142,6 +140,7 @@ impl Receiver {
                         resource_index,
                         user_index,
                         resource,
+                        user: *user,
                         capacity,
                         info,
                     })
@@ -190,19 +189,42 @@ impl Receiver {
                     let metrics =
                         super::iq::Demodulator::new(samples, acquisition, &admission, user)?
                             .recover()?;
-                    let psdu = super::super::bcc::recover(
-                        user.capacity,
-                        admission.timing.data_symbols,
-                        &metrics,
-                        max_psdu,
-                    )?;
+                    let (psdu, failed_codewords, first_failure) = if user.capacity.ldpc {
+                        let SignalFields::Ofdma(signal) = &admission.trained.signal.signal else {
+                            return Err(Error::UnsupportedFormat);
+                        };
+                        let recovered = super::super::ldpc::Decoder::for_ofdma(
+                            &signal.common,
+                            &user.user,
+                            user.resource,
+                            user.capacity,
+                            admission.timing.data_symbols,
+                        )?
+                        .recover(&metrics, max_psdu, true)?;
+                        (
+                            recovered.psdu,
+                            recovered.failed_codewords,
+                            recovered.first_failure,
+                        )
+                    } else {
+                        (
+                            super::super::bcc::recover(
+                                user.capacity,
+                                admission.timing.data_symbols,
+                                &metrics,
+                                max_psdu,
+                            )?,
+                            0,
+                            None,
+                        )
+                    };
                     Ok(Payload {
                         user_index: user.user_index,
                         resource: user.resource,
                         info: user.info,
                         psdu,
-                        failed_codewords: 0,
-                        first_failure: None,
+                        failed_codewords,
+                        first_failure,
                     })
                 })(),
             };

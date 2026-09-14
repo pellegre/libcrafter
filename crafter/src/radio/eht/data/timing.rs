@@ -14,7 +14,7 @@ pub(in crate::radio) struct Timing {
 }
 
 impl Timing {
-    /// Resolve the downlink one-stream non-OFDMA timeline after checked EHT-SIG.
+    /// Resolve the downlink one-stream timeline after checked EHT-SIG.
     pub fn new(fields: &Fields) -> Result<Self, Error> {
         if fields.legacy_length > 4095 || fields.legacy_length % 3 != 0 {
             return Err(Error::Length);

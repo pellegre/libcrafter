@@ -1,7 +1,6 @@
 //! Single-user EHT20 non-OFDMA DATA recovery.
 
 mod iq;
-mod ldpc;
 mod receiver;
 #[cfg(test)]
 mod tests;

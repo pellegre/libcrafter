@@ -2,6 +2,7 @@
 
 mod bcc;
 mod capacity;
+mod ldpc;
 mod non_ofdma;
 mod ofdma;
 mod receiver;
