@@ -1,4 +1,4 @@
-//! Bounded parallel legacy PHY dispatch; sources and packet parsing stay unchanged.
+//! Bounded parallel Wi-Fi PHY dispatch; sources and packet parsing stay unchanged.
 use super::*;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
@@ -7,6 +7,7 @@ struct Job {
     chunk: IqChunk,
     sequence: u64,
     dsss_workers: usize,
+    ofdm_output_slots: usize,
     output: Mutex<Collector>,
 }
 struct Collector {
@@ -44,10 +45,7 @@ impl Collector {
             }
             if let Some((old_slice, old)) = self.frames.iter_mut().find(|(_, old)| {
                 (self.split && family != 0 && same_split_frame(old, &frame))
-                    || (old.start.epoch == frame.start.epoch
-                        && old.start.sample_index == frame.start.sample_index
-                        && old.end_sample_index == frame.end_sample_index
-                        && old.bytes == frame.bytes)
+                    || super::wifi::same_occurrence(old, &frame)
             }) {
                 if (
                     slice,
@@ -208,7 +206,11 @@ fn process(decoder: &mut impl PhyDecoder, job: &Job, family: u8) -> RadioResult<
         128
     };
     config.max_chunk_samples = 128;
-    config.max_pending_frames = 1;
+    config.max_pending_frames = if family == 0 {
+        job.ofdm_output_slots
+    } else {
+        1
+    };
     for (index, samples) in job.chunk.cs8().chunks(256).enumerate() {
         let mut position = job.chunk.position().clone();
         position.sample_index += (index * 128) as u64;
@@ -246,13 +248,30 @@ pub struct ParallelLegacyWifiDecoder {
     failed: bool,
 }
 impl ParallelLegacyWifiDecoder {
-    pub fn new() -> RadioResult<Self> {
+    fn configured(ofdm: LegacyOfdmDecoder, split_dsss: bool) -> RadioResult<Self> {
+        let mut workers = vec![Worker::new(ofdm, LegacyOfdmDecoder::stats, 0)?];
+        if split_dsss {
+            workers.push(Worker::new(
+                DsssCckDecoder::phase_worker(0),
+                DsssCckDecoder::stats,
+                1,
+            )?);
+            workers.push(Worker::new(
+                DsssCckDecoder::phase_worker(1),
+                DsssCckDecoder::stats,
+                2,
+            )?);
+        } else {
+            workers.push(Worker::new(
+                DsssCckDecoder::new(),
+                DsssCckDecoder::stats,
+                1,
+            )?);
+        }
+        let worker_count = workers.len();
         Ok(Self {
-            workers: vec![
-                Worker::new(LegacyOfdmDecoder::new(), LegacyOfdmDecoder::stats, 0)?,
-                Worker::new(DsssCckDecoder::new(), DsssCckDecoder::stats, 1)?,
-            ],
-            stats: vec![DecoderStats::default(); 2],
+            workers,
+            stats: vec![DecoderStats::default(); worker_count],
             recent: Vec::new(),
             continuity: IqContinuity::default(),
             sequence: 0,
@@ -260,20 +279,14 @@ impl ParallelLegacyWifiDecoder {
             failed: false,
         })
     }
+    pub fn new() -> RadioResult<Self> {
+        Self::configured(LegacyOfdmDecoder::new(), false)
+    }
     /// Use separate workers for the two DSSS acquisition phases.
     /// Requires 640 buffer samples and six frame slots. DSSS statistics count
     /// worker detections before duplicate suppression.
     pub fn with_parallel_dsss() -> RadioResult<Self> {
-        let mut decoder = Self::new()?;
-        decoder.workers[1] =
-            Worker::new(DsssCckDecoder::phase_worker(0), DsssCckDecoder::stats, 1)?;
-        decoder.workers.push(Worker::new(
-            DsssCckDecoder::phase_worker(1),
-            DsssCckDecoder::stats,
-            2,
-        )?);
-        decoder.stats.push(DecoderStats::default());
-        Ok(decoder)
+        Self::configured(LegacyOfdmDecoder::new(), true)
     }
     pub fn ofdm_stats(&self) -> DecoderStats {
         self.stats[0]
@@ -386,6 +399,7 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
             .ok_or(RadioError::Overflow {
                 context: "combined decoder sequence",
             })?;
+        let ofdm_output_slots = config.max_pending_frames - if split { 5 } else { 2 };
         let job = Arc::new(Job {
             output: Mutex::new(Collector {
                 frames: Vec::new(),
@@ -399,6 +413,7 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
             }),
             chunk,
             dsss_workers: self.workers.len() - 1,
+            ofdm_output_slots,
             sequence: self.sequence,
         });
         self.send_both(|| Command::Process(job.clone()))?;
@@ -419,6 +434,48 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
         output.frames = decoded.frames;
         output.diagnostics.extend(decoded.diagnostics);
         Ok(output)
+    }
+}
+
+/// Persistent parallel Wi-Fi 4 and legacy PHY workers.
+///
+/// The OFDM worker enables HT20 decoding while the independent DSSS/CCK worker
+/// retains reception of legacy 2.4 GHz traffic. `with_parallel_dsss` assigns
+/// each DSSS acquisition phase to its own worker. Both constructors preserve
+/// the same bounded [`PhyDecoder`] contract as [`WifiDecoder`].
+pub struct ParallelWifiDecoder {
+    inner: ParallelLegacyWifiDecoder,
+}
+
+impl ParallelWifiDecoder {
+    pub fn new() -> RadioResult<Self> {
+        Ok(Self {
+            inner: ParallelLegacyWifiDecoder::configured(LegacyOfdmDecoder::with_ht(), false)?,
+        })
+    }
+
+    pub fn with_parallel_dsss() -> RadioResult<Self> {
+        Ok(Self {
+            inner: ParallelLegacyWifiDecoder::configured(LegacyOfdmDecoder::with_ht(), true)?,
+        })
+    }
+
+    pub fn ofdm_stats(&self) -> DecoderStats {
+        self.inner.ofdm_stats()
+    }
+
+    pub fn dsss_stats(&self) -> DecoderStats {
+        self.inner.dsss_stats()
+    }
+}
+
+impl PhyDecoder for ParallelWifiDecoder {
+    fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
+        self.inner.reset(reason)
+    }
+
+    fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
+        self.inner.consume(event)
     }
 }
 

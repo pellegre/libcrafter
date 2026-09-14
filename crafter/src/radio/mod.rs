@@ -23,7 +23,7 @@ pub use hackrf::{HackRfConfig, HackRfSource, HackRfStats};
 #[cfg(feature = "radio-hackrf")]
 pub use hackrf_tx::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
 mod parallel;
-pub use parallel::ParallelLegacyWifiDecoder;
+pub use parallel::{ParallelLegacyWifiDecoder, ParallelWifiDecoder};
 mod replay;
 mod signal;
 mod source;

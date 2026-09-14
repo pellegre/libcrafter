@@ -17,6 +17,8 @@ pub(super) fn run(path: &str, mode: &str, frames_path: Option<&str>) -> Result<(
     let mut decoder: Box<dyn PhyDecoder> = match mode {
         "combined" => Box::new(LegacyWifiDecoder::new()),
         "wifi" => Box::new(WifiDecoder::new()),
+        "wifi-parallel" => Box::new(ParallelWifiDecoder::new()?),
+        "wifi-parallel-dsss" => Box::new(ParallelWifiDecoder::with_parallel_dsss()?),
         "parallel-dsss" => Box::new(ParallelLegacyWifiDecoder::with_parallel_dsss()?),
         "parallel" => Box::new(ParallelLegacyWifiDecoder::new()?),
         "windowed-3" => Box::new(WindowedLegacyWifiDecoder::new(3)?),
@@ -24,7 +26,7 @@ pub(super) fn run(path: &str, mode: &str, frames_path: Option<&str>) -> Result<(
         "ofdm" => Box::new(LegacyOfdmDecoder::new()),
         "dsss" => Box::new(DsssCckDecoder::new()),
         _ => return Err(
-            "benchmark mode must be wifi, combined, parallel, parallel-dsss, windowed-3, windowed-4, ofdm, or dsss"
+            "benchmark mode must be wifi, wifi-parallel, wifi-parallel-dsss, combined, parallel, parallel-dsss, windowed-3, windowed-4, ofdm, or dsss"
                 .into(),
         ),
     };
