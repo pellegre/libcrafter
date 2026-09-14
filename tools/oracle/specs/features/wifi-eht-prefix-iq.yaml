@@ -12,7 +12,7 @@ behaviors:
     checks: [six_mbps_l_sig, length_modulo_three, repeated_l_sig, legacy_acquisition, exact_sample_coordinates]
   - name: usig-iq
     source: IEEE 802.11 TGbe 11-21/0049r1 36.3.11.7
-    checks: [two_bpsk_symbols, fifty_two_data_tones, pilot_phase, channel_equalization, crc, tail, validate_states]
+    checks: [two_bpsk_symbols, fifty_two_data_tones, pilot_phase, channel_equalization, crc, tail, validate_states, streaming_dispatch, typed_diagnostic]
 coverage_cases: [wifi-eht-prefix-iq]
 supported_cases:
   - {name: wifi-eht-prefix-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
@@ -20,5 +20,5 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - The prefix kernel recognizes EHT MU and EHT TB U-SIG in a 20 Msps observation; it does not decode EHT-SIG, training or DATA.
+      - The streaming receiver recognizes EHT MU and EHT TB U-SIG in a 20 Msps observation; it does not decode EHT-SIG, training or DATA.
       - U-SIG may report a wider PPDU because pre-EHT signaling is duplicated into 20 MHz subchannels; wider DATA cannot be recovered from this capture.

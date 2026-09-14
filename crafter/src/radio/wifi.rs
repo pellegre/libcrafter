@@ -15,8 +15,9 @@ use super::*;
 /// HE MU recovers FCS-checked aggregates for one DATA stream per RU, including STBC.
 /// HE TB uses recently decoded eligible Trigger fields for one DATA stream per
 /// disjoint RU, including STBC. Context matching is not BSS authentication.
-/// Other HE layouts, VHT MU,
-/// additional independent DATA streams, wider channels and EHT are not yet decoded.
+/// EHT MU/TB preambles are recognized through integrity-checked U-SIG, but
+/// EHT-SIG and EHT DATA are not yet decoded. Other HE layouts, VHT MU,
+/// additional independent DATA streams and wider channels are not yet decoded.
 /// This implements the same `PhyDecoder` packet-source interface
 /// and shares the bounds and output ordering of `LegacyWifiDecoder`.
 pub struct WifiDecoder {

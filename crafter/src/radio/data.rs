@@ -1,4 +1,5 @@
-//! Legacy and opt-in HT/VHT/HE DATA receive paths; source map in docs/wifi-phy-evidence.json.
+//! Legacy and opt-in HT/VHT/HE DATA receive paths plus EHT prefix recognition.
+//! Source map: docs/wifi-phy-evidence.json.
 use super::{
     signal::{decode_signal, TRELLIS_SIGNS},
     sync::{fft64, Acquisition, SyncEvent, Synchronizer},
@@ -23,6 +24,7 @@ struct Pending {
     he: Option<HeSuSignalFields>,
     he_er: bool,
     he_candidate: bool,
+    eht_candidate: bool,
     // Modulo-two repeated L-SIG: MU or ER until constellation discrimination.
     er_candidate: bool,
     mu_wait: Option<usize>,
@@ -757,6 +759,19 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 }
                 if p.samples.len() == 240 && p.info.is_some_and(|info| info.rate_bps == 6_000_000) {
                     if self.ht_enabled
+                        && eht::iq::repeated_legacy_signal(&p.samples, &p.acquisition).is_some()
+                    {
+                        if p.reserve_samples(320, config, reserved) {
+                            p.eht_candidate = true;
+                        } else {
+                            self.stats.rejected_frames =
+                                self.stats.rejected_frames.saturating_add(1);
+                            out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                            self.pending[slot] = None;
+                        }
+                        continue;
+                    }
+                    if self.ht_enabled
                         && he::iq::repeated_su_signal(&p.samples, &p.acquisition).is_some()
                     {
                         if p.reserve_samples(320, config, reserved) {
@@ -828,6 +843,32 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         }
                         p.samples
                             .reserve_exact(required.saturating_sub(p.samples.len()));
+                    }
+                }
+                if p.eht_candidate && p.samples.len() == 320 {
+                    p.eht_candidate = false;
+                    if let Some(prefix) = eht::iq::decode_prefix(&p.samples, &p.acquisition) {
+                        out.diagnostics.push(PhyDiagnostic::EhtUsig {
+                            fields: prefix.fields,
+                            preamble_sample_index: p.start.sample_index,
+                        });
+                        // U-SIG establishes EHT, so do not reinterpret this as
+                        // legacy DATA while EHT-SIG/DATA support is incomplete.
+                        out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        self.pending[slot] = None;
+                        continue;
+                    }
+                    // A legacy DATA symbol can accidentally resemble RL-SIG.
+                    // Until U-SIG validates, preserve that legacy candidate.
+                    let info = p.info.unwrap();
+                    if info.psdu_bytes > config.max_frame_bytes
+                        || !p.reserve_samples(80 + info.data_symbols * 80, config, reserved)
+                    {
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                        self.pending[slot] = None;
+                        continue;
                     }
                 }
                 if p.er_candidate
@@ -1214,6 +1255,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             he: None,
                             he_er: false,
                             he_candidate: false,
+                            eht_candidate: false,
                             er_candidate: false,
                             mu_wait: None,
                             mu_data_end: None,

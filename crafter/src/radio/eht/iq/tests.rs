@@ -1,5 +1,10 @@
 use super::*;
-use crate::radio::sync::{SyncEvent, Synchronizer};
+use crate::radio::{
+    sync::{SyncEvent, Synchronizer},
+    DecodeOutput, IqChunk, IqEvent, IqPosition, LegacyWifiDecoder, PhyDecoder, PhyDiagnostic,
+    RxConfig, StreamEnd, WifiDecoder,
+};
+use std::time::Duration;
 
 fn fixture(bytes: &[u8]) -> (Vec<ComplexSample>, Acquisition) {
     let samples: Vec<_> = bytes
@@ -108,5 +113,134 @@ fn radio_eht_prefix_bounds_and_nonfinite_samples() {
         overflow.phase_origin =
             overflow.signal_start - (acquisition.signal_start - acquisition.phase_origin);
         assert!(decode_prefix(input, &overflow).is_none());
+    }
+}
+
+fn config() -> RxConfig {
+    RxConfig {
+        sample_rate_hz: 20_000_000,
+        center_frequency_hz: 2_412_000_000,
+        max_chunk_samples: 10000,
+        max_buffer_samples: 120000,
+        max_frame_bytes: 4095,
+        max_pending_frames: 4,
+        max_capture_samples: 1000000,
+        max_duration: Duration::from_secs(1),
+    }
+}
+
+fn feed(decoder: &mut impl PhyDecoder, bytes: &[u8], size: usize) -> DecodeOutput {
+    let mut result = DecodeOutput::default();
+    for (sequence, part) in bytes.chunks(size * 2).enumerate() {
+        let chunk = IqChunk::new(
+            config(),
+            IqPosition {
+                epoch: 0,
+                sequence: sequence as u64,
+                sample_index: (sequence * size) as u64,
+                time_anchor: None,
+                discontinuity: None,
+            },
+            part.iter().map(|value| *value as i8).collect(),
+        )
+        .unwrap();
+        let mut output = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
+        result.frames.append(&mut output.frames);
+        result.diagnostics.append(&mut output.diagnostics);
+    }
+    let mut output = decoder.consume(IqEvent::End(StreamEnd::Eof)).unwrap();
+    result.diagnostics.append(&mut output.diagnostics);
+    result
+}
+
+#[test]
+fn radio_eht_usig_streaming_iq() {
+    let corpus = std::fs::read(format!(
+        "{}/tests/fixtures/iq/eht-prefix-iq.cs8",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/eht-prefix-index.tsv")
+        .lines()
+        .skip(1)
+        .collect();
+    assert_eq!(rows.len(), 384);
+    for (index, row) in rows.into_iter().enumerate() {
+        let columns: Vec<_> = row.split('\t').collect();
+        let offset: usize = columns[4].parse().unwrap();
+        let length: usize = columns[5].parse().unwrap();
+        let bytes = &corpus[offset..offset + length];
+        let bits: Vec<_> = columns[1].bytes().map(|value| value - b'0').collect();
+        let expected = PhyDiagnostic::EhtUsig {
+            fields: EhtUsigFields::decode(&bits).unwrap(),
+            preamble_sample_index: 37,
+        };
+        let chunk_size = [1, 37, 128, 997].get(index).copied().unwrap_or(997);
+        let output = feed(&mut WifiDecoder::new(), bytes, chunk_size);
+        assert!(output.frames.is_empty(), "{}", columns[0]);
+        assert!(output.diagnostics.contains(&expected), "{}", columns[0]);
+        assert!(
+            output.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy),
+            "{}",
+            columns[0]
+        );
+        assert!(!output.diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            PhyDiagnostic::HtSignal { .. }
+                | PhyDiagnostic::VhtSignalA { .. }
+                | PhyDiagnostic::HeSignal { .. }
+                | PhyDiagnostic::HeErSignal { .. }
+                | PhyDiagnostic::HeMuSignal { .. }
+                | PhyDiagnostic::HeTbSignal { .. }
+        )));
+    }
+
+    let first: Vec<_> = include_str!("../../../../tests/fixtures/iq/eht-prefix-index.tsv")
+        .lines()
+        .nth(1)
+        .unwrap()
+        .split('\t')
+        .collect();
+    let offset: usize = first[4].parse().unwrap();
+    let length: usize = first[5].parse().unwrap();
+    let output = feed(
+        &mut LegacyWifiDecoder::new(),
+        &corpus[offset..offset + length],
+        37,
+    );
+    assert!(!output
+        .diagnostics
+        .iter()
+        .any(|diagnostic| matches!(diagnostic, PhyDiagnostic::EhtUsig { .. })));
+}
+
+#[test]
+fn radio_eht_usig_streaming_rejects_invalid_prefixes() {
+    let corpus = std::fs::read(format!(
+        "{}/tests/fixtures/iq/eht-prefix-iq.cs8",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    for row in include_str!("../../../../tests/fixtures/iq/eht-prefix-invalid-index.tsv")
+        .lines()
+        .skip(1)
+    {
+        let columns: Vec<_> = row.split('\t').collect();
+        let offset: usize = columns[2].parse().unwrap();
+        let length: usize = columns[3].parse().unwrap();
+        let output = feed(
+            &mut WifiDecoder::new(),
+            &corpus[offset..offset + length],
+            37,
+        );
+        assert!(output.frames.is_empty(), "{}", columns[0]);
+        assert!(
+            !output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| matches!(diagnostic, PhyDiagnostic::EhtUsig { .. })),
+            "{}",
+            columns[0]
+        );
     }
 }

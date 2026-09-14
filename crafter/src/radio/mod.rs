@@ -273,6 +273,11 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
+    /// Integrity-checked EHT U-SIG. EHT-SIG and DATA are not implied.
+    EhtUsig {
+        fields: EhtUsigFields,
+        preamble_sample_index: u64,
+    },
     /// Trigger parameters used for this RU. Matching is not BSS authentication.
     HeTbUser {
         common: crate::Dot11TriggerCommonFields,
@@ -400,6 +405,16 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::EhtUsig {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::EhtUsig {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
             (
                 Self::HeTbUser {
                     common: a,
