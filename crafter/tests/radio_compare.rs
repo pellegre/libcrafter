@@ -4,3 +4,5 @@ mod artifact;
 #[path = "../examples/radio_support/compare.rs"]
 #[allow(dead_code)]
 mod compare;
+#[path = "../examples/radio_support/ht_compare.rs"]
+mod ht_compare;
