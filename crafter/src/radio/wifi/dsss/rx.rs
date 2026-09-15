@@ -1,11 +1,11 @@
 //! Private clause 15/18 acquisition. Coordinates refer to the original 20 Msps stream.
 use super::crc16;
+use crate::radio::wifi::ofdm::DecoderStats;
 use crate::radio::{
     codec::{
         DecodeOutput, FrameFraming, FrameIntegrity, PhyDecoder, PhyDiagnostic, RecoveredFrame,
         ResetReason,
     },
-    data::DecoderStats,
     error::{RadioError, RadioResult},
     transport::{
         ComplexSample, Discontinuity, GapReason, IqChunk, IqContinuity, IqEvent, IqPosition,

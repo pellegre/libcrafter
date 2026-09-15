@@ -134,7 +134,7 @@ impl<'a> Iterator for Scan<'a> {
         }
         let end = offset + 4 + delimiter.mpdu_bytes;
         let bytes = &self.bytes[offset + 4..end];
-        if !super::data::valid_fcs(bytes) {
+        if !super::wifi::ofdm::demod::valid_fcs(bytes) {
             return Some(Event::Invalid {
                 offset,
                 error: Error::BadFcs,

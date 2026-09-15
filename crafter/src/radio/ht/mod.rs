@@ -97,7 +97,7 @@ impl HtSignalFields {
         });
         let coded =
             std::array::from_fn::<_, 48, _>(|i| [deinterleaved[2 * i], deinterleaved[2 * i + 1]]);
-        Self::decode(&super::signal::decode_bcc(&coded))
+        Self::decode(&super::wifi::ofdm::signal::decode_bcc(&coded))
     }
 
     /// Decode 48 binary bits in transmission order, after BCC decoding.
@@ -156,7 +156,7 @@ pub(super) fn crc(bits: &[u8]) -> u8 {
 /// Recognize both QBPSK HT-SIG symbols using the shared legacy channel estimate.
 pub(super) fn decode_iq(
     samples: &[super::ComplexSample],
-    acquisition: &super::sync::Acquisition,
+    acquisition: &super::wifi::ofdm::sync::Acquisition,
 ) -> Option<HtSignalFields> {
     decode_iq_at(samples, acquisition, 80)
 }
@@ -165,10 +165,10 @@ pub(super) fn decode_iq(
 /// greenfield. All oscillator corrections retain acquisition's phase origin.
 pub(super) fn decode_iq_at(
     samples: &[super::ComplexSample],
-    acquisition: &super::sync::Acquisition,
+    acquisition: &super::wifi::ofdm::sync::Acquisition,
     signal_offset: usize,
 ) -> Option<HtSignalFields> {
-    use super::{sync::fft64, ComplexSample};
+    use super::{wifi::ofdm::sync::fft64, ComplexSample};
     if samples.len() != 160 {
         return None;
     }

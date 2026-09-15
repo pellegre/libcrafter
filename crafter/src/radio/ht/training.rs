@@ -2,7 +2,7 @@
 
 use crate::radio::{
     stbc,
-    sync::{fft64, Acquisition, LONG},
+    wifi::ofdm::sync::{fft64, Acquisition, LONG},
     ComplexSample,
 };
 

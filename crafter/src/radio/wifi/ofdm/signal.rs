@@ -1,9 +1,7 @@
 //! Legacy SIGNAL: IEEE 802.11-2007 17.3.4–17.3.5; evidence in docs/radio.md.
 #![allow(dead_code)] // Wired to the streaming DATA receiver in the next increment.
-use super::{
-    sync::{fft64, Acquisition},
-    ComplexSample,
-};
+use super::sync::{fft64, Acquisition};
+use crate::radio::ComplexSample;
 
 /// A validated legacy header is only a candidate: later PHYs share L-SIGNAL.
 /// Frame publication still requires DATA decoding and MAC integrity validation.
@@ -126,7 +124,7 @@ fn viterbi(coded: &[f32; 48]) -> [u8; 24] {
 }
 
 /// Shared bounded rate-1/2 BCC traceback. Callers validate finite soft metrics.
-pub(super) fn decode_bcc<const N: usize>(coded: &[[f32; 2]; N]) -> [u8; N] {
+pub(in crate::radio) fn decode_bcc<const N: usize>(coded: &[[f32; 2]; N]) -> [u8; N] {
     let mut metric = [f32::INFINITY; 64];
     metric[0] = 0.;
     let mut history = [[0u8; 64]; N];
@@ -212,7 +210,7 @@ pub(super) fn decode_signal(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::radio::sync::{SyncEvent, Synchronizer};
+    use crate::radio::wifi::ofdm::sync::{SyncEvent, Synchronizer};
     fn fixture(name: &str) -> (Vec<ComplexSample>, Acquisition) {
         let bytes = std::fs::read(format!(
             "{}/tests/fixtures/iq/ofdm-{name}.cs8",

@@ -1,48 +1,48 @@
 //! Private 20 Msps legacy OFDM acquisition (IEEE 802.11-2007 17.3.3).
 //! Fixed storage, sample-at-a-time operation; no packet is asserted by acquisition.
 #![allow(dead_code)] // Consumed by the subsequent SIGNAL/DATA decoder increment.
-use super::*;
+use crate::radio::{ComplexSample, Discontinuity, IqChunk, IqContinuity, RadioError, RadioResult};
 use std::{f32::consts::TAU, sync::OnceLock};
 
 impl ComplexSample {
-    pub(super) const ZERO: Self = Self { i: 0., q: 0. };
-    pub(super) fn add(self, b: Self) -> Self {
+    pub(in crate::radio) const ZERO: Self = Self { i: 0., q: 0. };
+    pub(in crate::radio) fn add(self, b: Self) -> Self {
         Self {
             i: self.i + b.i,
             q: self.q + b.q,
         }
     }
-    pub(super) fn sub(self, b: Self) -> Self {
+    pub(in crate::radio) fn sub(self, b: Self) -> Self {
         Self {
             i: self.i - b.i,
             q: self.q - b.q,
         }
     }
-    pub(super) fn mul(self, b: Self) -> Self {
+    pub(in crate::radio) fn mul(self, b: Self) -> Self {
         Self {
             i: self.i * b.i - self.q * b.q,
             q: self.i * b.q + self.q * b.i,
         }
     }
-    pub(super) fn scale(self, s: f32) -> Self {
+    pub(in crate::radio) fn scale(self, s: f32) -> Self {
         Self {
             i: self.i * s,
             q: self.q * s,
         }
     }
-    pub(super) fn conj(self) -> Self {
+    pub(in crate::radio) fn conj(self) -> Self {
         Self {
             i: self.i,
             q: -self.q,
         }
     }
-    pub(super) fn power(self) -> f32 {
+    pub(in crate::radio) fn power(self) -> f32 {
         self.i * self.i + self.q * self.q
     }
-    pub(super) fn phase(self) -> f32 {
+    pub(in crate::radio) fn phase(self) -> f32 {
         self.q.atan2(self.i)
     }
-    pub(super) fn rotation(angle: f32) -> Self {
+    pub(in crate::radio) fn rotation(angle: f32) -> Self {
         Self {
             i: angle.cos(),
             q: angle.sin(),
@@ -51,7 +51,7 @@ impl ComplexSample {
 }
 
 /// Natural-order, unnormalized forward FFT. Negative carriers use bin 64+k.
-pub(super) fn fft64(mut x: [ComplexSample; 64]) -> [ComplexSample; 64] {
+pub(in crate::radio) fn fft64(mut x: [ComplexSample; 64]) -> [ComplexSample; 64] {
     // Every radix-2 stage uses a subset of these fixed rotations. Sharing the
     // table avoids trigonometric calls for every received OFDM symbol.
     static ROTATIONS: OnceLock<[ComplexSample; 32]> = OnceLock::new();
@@ -78,7 +78,7 @@ pub(super) fn fft64(mut x: [ComplexSample; 64]) -> [ComplexSample; 64] {
     x
 }
 // Equation 17-8, ascending signed carrier order -26..26.
-pub(super) const LONG: [i8; 53] = [
+pub(in crate::radio) const LONG: [i8; 53] = [
     1, 1, -1, -1, 1, 1, -1, 1, -1, 1, 1, 1, 1, 1, 1, -1, -1, 1, 1, -1, 1, -1, 1, 1, 1, 1, 0, 1, -1,
     -1, 1, 1, -1, 1, -1, 1, -1, -1, -1, -1, -1, 1, 1, -1, -1, 1, -1, 1, -1, 1, 1, 1, 1,
 ];
@@ -90,7 +90,7 @@ fn long_time() -> [ComplexSample; 64] {
     fft64(bins).map(|v| v.conj().scale(1. / 64.))
 }
 #[derive(Debug, Clone)]
-pub(super) struct Acquisition {
+pub(in crate::radio) struct Acquisition {
     pub preamble_start: u64,
     pub signal_start: u64,
     /// Correction is exp(-j*frequency_rad*(index-phase_origin)).
@@ -101,13 +101,13 @@ pub(super) struct Acquisition {
     pub correlation: f32,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum AcquisitionFailure {
+pub(in crate::radio) enum AcquisitionFailure {
     LongTrainingNotFound,
     Interrupted,
     UnsupportedSampleRate,
 }
 #[derive(Debug)]
-pub(super) enum SyncEvent {
+pub(in crate::radio) enum SyncEvent {
     Acquired(Acquisition),
     Failure(AcquisitionFailure),
     Reset(Discontinuity),
@@ -122,7 +122,7 @@ struct LongWindow {
     cross: ComplexSample,
     energy: [f32; 2],
 }
-pub(super) struct Synchronizer {
+pub(in crate::radio) struct Synchronizer {
     // The oldest correlation input is ago(128); power-of-two storage permits
     // masked indexing while retaining every input used by acquisition.
     ring: [ComplexSample; 256],
@@ -359,6 +359,7 @@ impl Synchronizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::radio::{GapReason, IqPosition, RxConfig, SampleLoss};
     use std::time::Duration;
     #[test]
     fn radio_sync_incremental_correlation_matches_direct_window() {
@@ -444,15 +445,15 @@ mod tests {
     fn radio_sync_independent_timing_frequency_and_chunk_invariance() {
         for (bytes, hz) in [
             (
-                include_bytes!("../../tests/fixtures/iq/ofdm-6-clean.cs8").as_slice(),
+                include_bytes!("../../../../tests/fixtures/iq/ofdm-6-clean.cs8").as_slice(),
                 0.,
             ),
             (
-                include_bytes!("../../tests/fixtures/iq/ofdm-6-offset.cs8").as_slice(),
+                include_bytes!("../../../../tests/fixtures/iq/ofdm-6-offset.cs8").as_slice(),
                 80000.,
             ),
             (
-                include_bytes!("../../tests/fixtures/iq/ofdm-6-noisy.cs8").as_slice(),
+                include_bytes!("../../../../tests/fixtures/iq/ofdm-6-noisy.cs8").as_slice(),
                 0.,
             ),
         ] {
@@ -556,7 +557,7 @@ mod tests {
     }
     #[test]
     fn radio_sync_loss_recovery() {
-        let bytes = include_bytes!("../../tests/fixtures/iq/ofdm-6-clean.cs8");
+        let bytes = include_bytes!("../../../../tests/fixtures/iq/ofdm-6-clean.cs8");
         let mut s = Synchronizer::default();
         for (i, b) in bytes[..400].chunks_exact(2).enumerate() {
             s.push(
@@ -602,7 +603,7 @@ mod tests {
             time_anchor: None,
             discontinuity: None,
         };
-        let bytes = include_bytes!("../../tests/fixtures/iq/ofdm-6-clean.cs8");
+        let bytes = include_bytes!("../../../../tests/fixtures/iq/ofdm-6-clean.cs8");
         for mode in 0..3 {
             let mut sync = Synchronizer::default();
             let first = IqChunk::new(

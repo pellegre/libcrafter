@@ -1,11 +1,11 @@
 //! Combined receive-only legacy PHY dispatch.
 use super::super::{
     codec::{DecodeOutput, PhyDecoder, PhyDiagnostic, RecoveredFrame, ResetReason},
-    data::{DecoderStats, LegacyOfdmDecoder},
     error::{RadioError, RadioResult},
     transport::{IqChunk, IqContinuity, IqEvent},
 };
 use super::dsss::DsssCckDecoder;
+use super::ofdm::{DecoderStats, LegacyOfdmDecoder};
 
 /// Combined legacy and HT20 one-stream BCC/LDPC receiver.
 ///

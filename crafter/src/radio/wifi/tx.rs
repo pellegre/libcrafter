@@ -3,13 +3,13 @@
 use super::super::{
     error::{RadioError, RadioResult},
     ht::{HtTransmission, HtTxConfig},
-    ofdm_tx::{LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig},
     packet::writer::PacketEncoder,
     transport::{EncodedSamples, OwnedSamples},
 };
 use super::dsss::{
     DsssPreamble, LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig,
 };
+use super::ofdm::{LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig};
 use crate::{wire::PacketRecord, Dot11};
 
 /// Legacy and HT20 encoders behind the same protocol-independent sample contract.
