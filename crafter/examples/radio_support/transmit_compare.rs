@@ -362,6 +362,30 @@ pub fn compare(plan: &str, capture: &str) -> Result<Value> {
     Ok(compare_cases(&cases, &frames, exclusions))
 }
 
+/// Compare FCS-validated receiver observations with the existing plan contract.
+pub(super) fn compare_received(
+    plan: &str,
+    observations: Vec<(Vec<u8>, u32, Option<bool>, Option<HtPhy>)>,
+) -> Result<Value> {
+    let cases = load_plan(plan)?;
+    let mut frames = Vec::new();
+    for (mac, rate_bps, short_preamble, ht) in observations {
+        let phy = match ht {
+            Some(ht) => ObservedPhy::Ht20(ht),
+            None => ObservedPhy::Legacy {
+                rate_bps,
+                short_preamble: short_preamble.ok_or("missing observed legacy preamble")?,
+            },
+        };
+        frames.push(Observed {
+            mac,
+            phy,
+            fcs: "present_valid",
+        });
+    }
+    Ok(compare_cases(&cases, &frames, BTreeMap::new()))
+}
+
 fn qualified_path(base: &Path, relative: &str) -> Result<PathBuf> {
     let path = Path::new(relative);
     if relative.is_empty()
@@ -389,7 +413,7 @@ fn sha256(path: &Path) -> Result<String> {
     Ok(hex(&digest.finalize()))
 }
 
-fn verified_file(base: &Path, value: &Value, label: &str) -> Result<PathBuf> {
+pub(super) fn verified_file(base: &Path, value: &Value, label: &str) -> Result<PathBuf> {
     let relative = value["path"]
         .as_str()
         .ok_or_else(|| format!("missing {label} path"))?;

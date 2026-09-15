@@ -465,3 +465,93 @@ fn interrupted_waveform_cannot_yield_a_complete_packet() {
         assert!(records.is_empty(), "{loss:?}");
     }
 }
+
+#[test]
+fn radio_encoder_overrides_survive_the_public_interface() {
+    use crafter::radio::{IqSink, OwnedSamples, PacketEncoder, RadioResult};
+    use std::sync::{Arc, Mutex};
+    struct Sink(Arc<Mutex<Vec<i8>>>);
+    impl IqSink<OwnedSamples> for Sink {
+        fn write(&mut self, samples: &OwnedSamples) -> RadioResult<()> {
+            *self.0.lock().unwrap() = samples.cs8.clone();
+            Ok(())
+        }
+    }
+    let record =
+        PacketRecord::new(Packet::decode_from_link(LinkType::Ieee80211, &data_frame()).unwrap());
+    let mut legacy = LegacyWifiTxConfig::ofdm(LegacyOfdmRate::Mbps6);
+    legacy.ofdm.scale = 450.0;
+    legacy.ofdm.leading_samples = 19;
+    legacy.fcs = WifiFcsPolicy::Explicit([1, 2, 3, 4]);
+    let expected_legacy = legacy.encode_packet(&record).unwrap().cs8().to_vec();
+    let mut ht = HtTxConfig::new(HtMcs::Mcs3);
+    ht.scale = 400.0;
+    ht.leading_samples = 23;
+    ht.fcs = WifiFcsPolicy::Explicit([5, 6, 7, 8]);
+    let expected_ht = ht.encode_packet(&record).unwrap().cs8().to_vec();
+    for (encoder, phy, expected) in [
+        (
+            WifiPacketEncoder::Legacy(legacy),
+            WifiPhy::Ofdm { rate_mbps: 6 },
+            expected_legacy,
+        ),
+        (
+            WifiPacketEncoder::Ht20(ht),
+            WifiPhy::Ht20 {
+                mcs: 3,
+                short_guard: false,
+                greenfield: false,
+                ldpc: false,
+            },
+            expected_ht,
+        ),
+    ] {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let config = WifiInterfaceConfig {
+            directions: WifiDirections::Transmit,
+            transmit_phy: phy,
+            radio_encoder: Some(encoder),
+            ..Default::default()
+        };
+        let wire = PacketWire::wifi(
+            WifiBackend::RadioAdapters {
+                source: None,
+                sink: Some(Box::new(Sink(captured.clone()))),
+                bounds: bounds(),
+            },
+            config.clone(),
+        )
+        .unwrap();
+        wire.writer().unwrap().write_record(&record).unwrap();
+        assert_eq!(*captured.lock().unwrap(), expected);
+        let error = PacketWire::wifi(
+            WifiBackend::MonitorAdapters {
+                source: None,
+                writer: Some(Box::new(MemoryPacketWriter::dry_run())),
+                framing: LinkType::Radiotap,
+                radiotap_override: None,
+            },
+            config,
+        )
+        .err()
+        .unwrap();
+        assert!(error
+            .to_string()
+            .contains("monitor drivers do not accept IQ encoder settings"));
+    }
+    let error = PacketWire::wifi(
+        WifiBackend::RadioAdapters {
+            source: None,
+            sink: None,
+            bounds: bounds(),
+        },
+        WifiInterfaceConfig {
+            directions: WifiDirections::Transmit,
+            radio_encoder: Some(WifiPacketEncoder::Ht20(HtTxConfig::new(HtMcs::Mcs0))),
+            ..Default::default()
+        },
+    )
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("radio encoder PHY differs"));
+}

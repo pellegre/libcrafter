@@ -324,6 +324,8 @@ impl Drop for State {
 }
 
 /// Shared native ownership. Opening acquires one handle but starts no RF transfer.
+/// Clones share that handle, direction state, and cancellation signal.
+#[derive(Clone)]
 pub struct HackRfDuplex {
     state: Arc<Mutex<State>>,
     control: HackRfDuplexControl,
@@ -787,6 +789,40 @@ mod tests {
         control.cancel();
         assert!(source.next_record().unwrap().is_none());
         assert!(writer.write_record(&received).is_err());
+    }
+    #[test]
+    fn cloned_native_owners_share_transmission_state_and_cancellation() {
+        use crate::prelude::*;
+        let (rx, tx) = configs();
+        let duplex = HackRfDuplex::mock(rx, tx, vec![]).unwrap();
+        let packet = PacketRecord::new(Dot11::data() / Raw::from("shared owner"));
+        let config = WifiInterfaceConfig {
+            directions: WifiDirections::Transmit,
+            ..Default::default()
+        };
+        let mut controls = Vec::new();
+        for _ in 0..2 {
+            let wire = PacketWire::wifi(
+                WifiBackend::HackRfOpened {
+                    duplex: duplex.clone(),
+                },
+                config.clone(),
+            )
+            .unwrap();
+            controls.push(wire.wifi_control().unwrap());
+            wire.writer().unwrap().write_record(&packet).unwrap();
+        }
+        let first = controls[0].native_status().unwrap();
+        let second = controls[1].native_status().unwrap();
+        assert_eq!(first.direction, HackRfDirection::Idle);
+        assert_eq!(first.direction_changes, second.direction_changes);
+        assert!(first.direction_changes >= 4);
+        assert_eq!(first.tx.unwrap().completed_repetitions, 1);
+        assert_eq!(second.tx.unwrap().completed_repetitions, 1);
+        controls[0].cancel();
+        assert!(controls[1].native_status().unwrap().cancelled);
+        let wire = PacketWire::wifi(WifiBackend::HackRfOpened { duplex }, config).unwrap();
+        assert!(wire.writer().unwrap().write_record(&packet).is_err());
     }
     #[test]
     fn opened_native_owner_cannot_misrepresent_frequency_or_rate() {

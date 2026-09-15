@@ -81,6 +81,30 @@ pub trait PacketEncoder: Clone {
     fn encode_packet(&self, record: &PacketRecord) -> RadioResult<Self::Transmission>;
 }
 
+/// Legacy and HT20 encoders behind the same protocol-independent sample contract.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WifiPacketEncoder {
+    Legacy(LegacyWifiTxConfig),
+    Ht20(HtTxConfig),
+}
+
+impl PacketEncoder for WifiPacketEncoder {
+    type Transmission = OwnedSamples;
+
+    fn encode_packet(&self, record: &PacketRecord) -> RadioResult<OwnedSamples> {
+        fn owned(samples: impl EncodedSamples) -> OwnedSamples {
+            OwnedSamples {
+                cs8: samples.samples_cs8().to_vec(),
+                sample_rate_hz: samples.sample_rate_hz(),
+            }
+        }
+        match self {
+            Self::Legacy(config) => config.encode_packet(record).map(owned),
+            Self::Ht20(config) => config.encode_packet(record).map(owned),
+        }
+    }
+}
+
 /// One decoder-supported legacy Wi-Fi PHY selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LegacyWifiPhy {

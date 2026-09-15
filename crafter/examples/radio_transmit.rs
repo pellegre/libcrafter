@@ -321,6 +321,60 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+#[cfg(any(feature = "radio-hackrf", test))]
+fn interface_config(case: &Case, frequency_hz: u64, scale: f64) -> WifiInterfaceConfig {
+    let (transmit_phy, radio_encoder) = match case.phy {
+        CasePhy::Legacy(phy) => match phy {
+            LegacyWifiPhy::Ofdm(rate) => {
+                let mut encoder = LegacyWifiTxConfig::ofdm(rate);
+                encoder.ofdm.scale = scale;
+                (
+                    WifiPhy::Ofdm {
+                        rate_mbps: rate.mbps(),
+                    },
+                    WifiPacketEncoder::Legacy(encoder),
+                )
+            }
+            LegacyWifiPhy::DsssCck { rate, preamble } => (
+                WifiPhy::DsssCck {
+                    rate_500kbps: (rate.bps() / 500_000) as u8,
+                    short_preamble: preamble.is_short(),
+                },
+                WifiPacketEncoder::Legacy(LegacyWifiTxConfig::dsss_cck(rate, preamble)),
+            ),
+        },
+        CasePhy::Ht20 {
+            mcs,
+            format,
+            coding,
+            guard_interval,
+        } => {
+            let mut encoder = HtTxConfig::new(mcs)
+                .with_format(format)
+                .with_coding(coding)
+                .with_guard_interval(guard_interval);
+            encoder.scale = scale;
+            (
+                WifiPhy::Ht20 {
+                    mcs: mcs.index(),
+                    short_guard: guard_interval == HtGuardInterval::Short,
+                    greenfield: format == HtFormat::Greenfield,
+                    ldpc: coding == HtCoding::Ldpc,
+                },
+                WifiPacketEncoder::Ht20(encoder),
+            )
+        }
+    };
+    WifiInterfaceConfig {
+        center_frequency_hz: frequency_hz,
+        channel: None,
+        directions: WifiDirections::Transmit,
+        transmit_phy,
+        radio_encoder: Some(radio_encoder),
+        ..WifiInterfaceConfig::default()
+    }
+}
+
 fn parse_args() -> Result<(bool, String, Option<PathBuf>)> {
     let mut matrix = false;
     let mut family = "legacy".to_owned();
@@ -350,6 +404,7 @@ fn main() -> Result<()> {
 
 #[cfg(feature = "radio-hackrf")]
 fn run_live(args: Vec<String>) -> Result<()> {
+    use crafter::radio::{HackRfConfig, HackRfDuplex, RxConfig};
     use std::{collections::BTreeMap, time::Duration};
     let mut values = BTreeMap::new();
     let mut index = 0;
@@ -400,51 +455,58 @@ fn run_live(args: Vec<String>) -> Result<()> {
     let matrix = boolean("matrix")?;
     let family = values.get("family").map(String::as_str).unwrap_or("legacy");
     let case_id = required("case-id")?;
-    let mut sink = HackRfTxSink::open_live(config)?;
     let selected = selected_cases(matrix, family, &case_id)?;
+    let frequency_hz = config.center_frequency_hz;
+    let rx = HackRfConfig {
+        rx: RxConfig {
+            sample_rate_hz: config.sample_rate_hz,
+            center_frequency_hz: frequency_hz,
+            max_chunk_samples: 65_536,
+            max_buffer_samples: 16_777_216,
+            max_frame_bytes: 4095,
+            max_pending_frames: 1024,
+            max_capture_samples: config.max_supplied_samples,
+            max_duration: config.max_duration,
+        },
+        serial: config.serial.clone(),
+        baseband_filter_hz: config.baseband_filter_hz,
+        lna_gain_db: 0,
+        vga_gain_db: 0,
+        amplifier_enabled: config.amplifier_enabled,
+        antenna_power_enabled: config.antenna_power_enabled,
+    };
+    let duplex = HackRfDuplex::open(rx, config)?;
     let selected_len = selected.len();
     println!(
         "{}",
         json!({
             "schema":SCHEMA,"kind":"header","case_count":selected.len(),"offline":false,
             "family":family,"case_selector":case_id,"ofdm_scale":ofdm_scale,
-            "case_gap_ms":case_gap.as_millis()
+            "case_gap_ms":case_gap.as_millis(),"api":"PacketWire","backend":"hackrf"
         })
     );
     for (index, case) in selected.into_iter().enumerate() {
-        match case.phy {
-            CasePhy::Legacy(phy) => {
-                let phy_config = match phy {
-                    LegacyWifiPhy::Ofdm(rate) => {
-                        let mut config = LegacyWifiTxConfig::ofdm(rate);
-                        config.ofdm.scale = ofdm_scale;
-                        config
-                    }
-                    LegacyWifiPhy::DsssCck { rate, preamble } => {
-                        LegacyWifiTxConfig::dsss_cck(rate, preamble)
-                    }
-                };
-                let mut writer = RadioPacketWriter::new(phy_config, sink);
-                writer.write_record(&PacketRecord::new(packet(&case.id)))?;
-                sink = writer.into_sink();
-            }
-            CasePhy::Ht20 {
-                mcs,
-                format,
-                coding,
-                guard_interval,
-            } => {
-                let mut phy_config = HtTxConfig::new(mcs)
-                    .with_format(format)
-                    .with_coding(coding)
-                    .with_guard_interval(guard_interval);
-                phy_config.scale = ofdm_scale;
-                let mut writer = RadioPacketWriter::new(phy_config, sink);
-                writer.write_record(&PacketRecord::new(packet(&case.id)))?;
-                sink = writer.into_sink();
-            }
+        let wire = PacketWire::wifi(
+            WifiBackend::HackRfOpened {
+                duplex: duplex.clone(),
+            },
+            interface_config(&case, frequency_hz, ofdm_scale),
+        )?;
+        let control = wire
+            .wifi_control()
+            .ok_or("missing Wi-Fi interface control")?;
+        let report = wire
+            .writer()?
+            .write_record(&PacketRecord::new(packet(&case.id)))?;
+        if report.radio_outcome().map(|outcome| outcome.completion)
+            != Some(SampleCompletion::DeviceCompleted)
+        {
+            return Err("missing complete device submission".into());
         }
-        let stats = sink.last_stats().ok_or("missing HackRF terminal stats")?;
+        let stats = control
+            .native_status()
+            .and_then(|status| status.tx)
+            .ok_or("missing HackRF terminal stats")?;
         let mut record = json!({
             "schema":SCHEMA,"kind":"case","case_id":case.id,"terminal":"complete",
             "requested_samples":stats.requested_samples,"supplied_samples":stats.supplied_samples,
@@ -466,6 +528,7 @@ fn run_live(args: Vec<String>) -> Result<()> {
             std::thread::sleep(case_gap);
         }
     }
+    drop(duplex);
     println!(
         "{}",
         json!({"schema":SCHEMA,"kind":"summary","complete":true,"terminal":"complete"})
@@ -476,6 +539,61 @@ fn run_live(args: Vec<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_interface_preserves_complete_offline_transmit_matrices() {
+        use crafter::radio::{OwnedSamples, RadioResult, RxConfig};
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+        struct Sink(Arc<Mutex<Vec<i8>>>);
+        impl IqSink<OwnedSamples> for Sink {
+            fn write(&mut self, samples: &OwnedSamples) -> RadioResult<()> {
+                *self.0.lock().unwrap() = samples.cs8.clone();
+                Ok(())
+            }
+        }
+        for family in ["legacy", "ht20"] {
+            let reference = run(true, family, None, Vec::new()).unwrap();
+            for (case, reference) in cases(true, family).unwrap().into_iter().zip(reference) {
+                let captured = Arc::new(Mutex::new(Vec::new()));
+                let wire = PacketWire::wifi(
+                    WifiBackend::RadioAdapters {
+                        source: None,
+                        sink: Some(Box::new(Sink(captured.clone()))),
+                        bounds: RxConfig {
+                            sample_rate_hz: 20_000_000,
+                            center_frequency_hz: 2_437_000_000,
+                            max_chunk_samples: 65_536,
+                            max_buffer_samples: 1_000_000,
+                            max_frame_bytes: 4095,
+                            max_pending_frames: 32,
+                            max_capture_samples: 1_000_000,
+                            max_duration: Duration::from_secs(1),
+                        },
+                    },
+                    interface_config(&case, 2_437_000_000, 300.0),
+                )
+                .unwrap();
+                wire.writer()
+                    .unwrap()
+                    .write_record(&PacketRecord::new(packet(&case.id)))
+                    .unwrap();
+                let bytes = captured
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|&b| b as u8)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    reference["cs8_sha256"],
+                    hex(&Sha256::digest(&bytes)),
+                    "{}",
+                    case.id
+                );
+                assert_eq!(reference["sample_count"], bytes.len() / 2, "{}", case.id);
+            }
+        }
+    }
 
     #[test]
     fn matrix_is_complete_and_unique() {

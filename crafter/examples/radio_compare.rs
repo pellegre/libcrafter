@@ -5,10 +5,37 @@ mod artifact;
 mod compare;
 #[path = "radio_support/ht_compare.rs"]
 mod ht_compare;
+#[path = "radio_support/interface_qualification.rs"]
+mod interface_qualification;
 #[path = "radio_support/transmit_compare.rs"]
 mod transmit_compare;
 fn main() -> artifact::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--compare-monitor-transmit") {
+        if args.len() != 3 {
+            return Err(
+                "usage: radio_compare --compare-monitor-transmit RUN.json REPORT.json".into(),
+            );
+        }
+        let report = interface_qualification::compare_monitor_transmit(&args[1])?;
+        artifact::write_json(&mut std::fs::File::create(&args[2])?, &report)?;
+        artifact::write_json(&mut std::io::stdout(), &report)?;
+        if report["status"] != "passed" {
+            return Err("monitor transmit comparison requirements failed".into());
+        }
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("--verify-interface-qualification") {
+        if args.len() != 2 {
+            return Err(
+                "usage: radio_compare --verify-interface-qualification SUMMARY.json".into(),
+            );
+        }
+        return artifact::write_json(
+            &mut std::io::stdout(),
+            &interface_qualification::verify(&args[1])?,
+        );
+    }
     if args.first().map(String::as_str) == Some("--compare-transmit") {
         if args.len() != 4 {
             return Err(
