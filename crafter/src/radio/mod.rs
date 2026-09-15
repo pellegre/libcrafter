@@ -12,10 +12,8 @@ mod hackrf_duplex;
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf_tx;
 mod packet;
-mod parallel;
 mod transport;
 mod wifi;
-mod windowed;
 
 pub use codec::{
     DecodeOutput, FrameFraming, FrameIntegrity, PhyDecoder, PhyDiagnostic, RecoveredFrame,
@@ -32,7 +30,6 @@ pub use hackrf_duplex::{
 #[cfg(feature = "radio-hackrf")]
 pub use hackrf_tx::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
 pub use packet::{PacketEncoder, RadioPacketSource, RadioPacketWriter, RadioReceiveMetadata};
-pub use parallel::{ParallelLegacyWifiDecoder, ParallelWifiDecoder};
 pub use transport::{
     ComplexSample, Discontinuity, EncodedSamples, GapReason, IqChunk, IqContinuity, IqEvent,
     IqPosition, IqSink, IqSinkOutcome, IqSource, MemoryIqSource, OwnedSamples, ReaderIqSource,
@@ -44,9 +41,9 @@ pub use wifi::{
     HtTxConfig, LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig,
     LegacyOfdmDecoder, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
     LegacyWifiDecoder, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, OfdmSignalFields,
-    SignalInfo, WifiDecoder, WifiFcsPolicy, WifiPacketEncoder, WifiTxEncoder,
+    ParallelLegacyWifiDecoder, ParallelWifiDecoder, SignalInfo, WifiDecoder, WifiFcsPolicy,
+    WifiPacketEncoder, WifiTxEncoder, WindowedLegacyWifiDecoder, WindowedWifiDecoder,
 };
-pub use windowed::{WindowedLegacyWifiDecoder, WindowedWifiDecoder};
 
 /// Compatibility facade for the deterministic in-memory sample sink.
 pub type MemoryIqSink<T = LegacyWifiTransmission> = transport::MemoryIqSink<T>;
