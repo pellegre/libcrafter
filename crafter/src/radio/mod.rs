@@ -6,8 +6,6 @@
 mod ampdu;
 mod codec;
 mod data;
-mod dsss;
-mod dsss_tx;
 mod error;
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf;
@@ -32,11 +30,6 @@ pub use codec::{
     ResetReason,
 };
 pub use data::{DecoderStats, LegacyOfdmDecoder};
-pub use dsss::DsssCckDecoder;
-pub use dsss_tx::{
-    DsssPlcpFields, DsssPreamble, LegacyDsssCckRate, LegacyDsssCckTransmission,
-    LegacyDsssCckTxConfig,
-};
 pub use error::{RadioError, RadioResult};
 #[cfg(feature = "radio-hackrf")]
 pub use hackrf::{HackRfConfig, HackRfSource, HackRfStats};
@@ -61,8 +54,10 @@ pub use transport::{
     RxConfig, SampleCompletion, SampleFormat, SampleLoss, StreamEnd, TimeAnchor,
 };
 pub use wifi::{
-    EncodedWifiTransmission, LegacyWifiDecoder, LegacyWifiPhy, LegacyWifiTransmission,
-    LegacyWifiTxConfig, WifiDecoder, WifiFcsPolicy, WifiPacketEncoder, WifiTxEncoder,
+    DsssCckDecoder, DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, LegacyDsssCckRate,
+    LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyWifiDecoder, LegacyWifiPhy,
+    LegacyWifiTransmission, LegacyWifiTxConfig, WifiDecoder, WifiFcsPolicy, WifiPacketEncoder,
+    WifiTxEncoder,
 };
 pub use windowed::{WindowedLegacyWifiDecoder, WindowedWifiDecoder};
 

@@ -1,12 +1,14 @@
 //! Wi-Fi packet encoding policy and owned PHY transmissions.
 
 use super::super::{
-    dsss_tx::{DsssPreamble, LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig},
     error::{RadioError, RadioResult},
     ht::{HtTransmission, HtTxConfig},
     ofdm_tx::{LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig},
     packet::writer::PacketEncoder,
     transport::{EncodedSamples, OwnedSamples},
+};
+use super::dsss::{
+    DsssPreamble, LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig,
 };
 use crate::{wire::PacketRecord, Dot11};
 

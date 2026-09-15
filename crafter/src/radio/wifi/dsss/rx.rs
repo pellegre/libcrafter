@@ -1,5 +1,17 @@
 //! Private clause 15/18 acquisition. Coordinates refer to the original 20 Msps stream.
-use super::*;
+use super::crc16;
+use crate::radio::{
+    codec::{
+        DecodeOutput, FrameFraming, FrameIntegrity, PhyDecoder, PhyDiagnostic, RecoveredFrame,
+        ResetReason,
+    },
+    data::DecoderStats,
+    error::{RadioError, RadioResult},
+    transport::{
+        ComplexSample, Discontinuity, GapReason, IqChunk, IqContinuity, IqEvent, IqPosition,
+        RxConfig, SampleLoss,
+    },
+};
 use crate::LinkType;
 use std::f32::consts::PI;
 use wide::f32x4;
@@ -29,16 +41,6 @@ pub(super) struct Header {
     pub trained_channel: Option<ChannelModel>,
 }
 
-pub(super) fn crc16(bytes: &[u8]) -> u16 {
-    let mut crc = 0xffffu16;
-    for &byte in bytes {
-        crc ^= u16::from(byte);
-        for _ in 0..8 {
-            crc = (crc >> 1) ^ (0x8408 & 0u16.wrapping_sub(crc & 1));
-        }
-    }
-    !crc
-}
 fn length(header: [u8; 6], short: bool, bound: usize) -> Option<(u32, usize)> {
     if crc16(&header[..4]) != u16::from_le_bytes([header[4], header[5]]) {
         return None;
@@ -1084,7 +1086,7 @@ mod tests {
 
     #[test]
     fn radio_dsss_continuity_resets() {
-        let bytes = include_bytes!("../../tests/fixtures/iq/dsss-10-long-clean-48.cs8");
+        let bytes = include_bytes!("../../../../tests/fixtures/iq/dsss-10-long-clean-48.cs8");
         for variant in 0..5 {
             let mut acquisition = Acquisition::new();
             let mut output = Vec::new();
@@ -1472,7 +1474,7 @@ impl DsssCckDecoder {
     pub fn new() -> Self {
         Self::default()
     }
-    pub(super) fn phase_worker(phase: u8) -> Self {
+    pub(in crate::radio) fn phase_worker(phase: u8) -> Self {
         assert!(phase <= 1);
         let mut decoder = Self::new();
         decoder.acquisition.phase = Some(phase);
@@ -1555,7 +1557,7 @@ impl PhyDecoder for DsssCckDecoder {
                             bytes: p.bytes,
                             link_type: LinkType::Ieee80211,
                             integrity: FrameIntegrity::ValidFcs,
-                            framing: super::FrameFraming { trailer_bytes: 4 },
+                            framing: FrameFraming { trailer_bytes: 4 },
                             config: config.clone(),
                             start: p.start,
                             end_sample_index: p.next.ceil() as u64,
