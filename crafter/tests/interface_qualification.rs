@@ -22,6 +22,47 @@ use std::{
 
 const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
 
+#[test]
+fn unknown_reference_configuration_requires_explicit_scope_and_inventory() {
+    let report = json!({"qualification_gaps":[compare::REFERENCE_HT_CONFIGURATION_GAP]});
+    let run = json!({"phy_scope":"known_fields","evidence_gaps":report["qualification_gaps"]});
+    let inventory = json!([{"mode":"reference-ht-configuration","reason":"reference omits configuration fields"}]);
+    assert!(interface_qualification::check_rx_gaps(&report, &run, &inventory).is_ok());
+    assert_eq!(report["qualification_gaps"].as_array().unwrap().len(), 1);
+    for value in [
+        json!({}),
+        json!({"phy_scope":"known_fields"}),
+        json!({"evidence_gaps":report["qualification_gaps"]}),
+    ] {
+        assert!(interface_qualification::check_rx_gaps(&report, &value, &inventory).is_err());
+    }
+    for value in [
+        json!([]),
+        json!([{"mode":"reference-ht-configuration","reason":""}]),
+        json!([{"mode":"another-mode","reason":"unverified"}]),
+    ] {
+        assert!(interface_qualification::check_rx_gaps(&report, &run, &value).is_err());
+    }
+    for gaps in [
+        json!(["synthetic unknown gap"]),
+        json!([
+            compare::REFERENCE_HT_CONFIGURATION_GAP,
+            "synthetic unknown gap"
+        ]),
+        json!([
+            compare::REFERENCE_HT_CONFIGURATION_GAP,
+            compare::REFERENCE_HT_CONFIGURATION_GAP
+        ]),
+    ] {
+        let changed = json!({"qualification_gaps":gaps});
+        let declared = json!({"phy_scope":"known_fields","evidence_gaps":gaps});
+        assert!(interface_qualification::check_rx_gaps(&changed, &declared, &inventory).is_err());
+    }
+    let complete = json!({"qualification_gaps":[]});
+    assert!(interface_qualification::check_rx_gaps(&complete, &json!({}), &json!([])).is_ok());
+    assert!(interface_qualification::check_rx_gaps(&complete, &run, &inventory).is_err());
+}
+
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {

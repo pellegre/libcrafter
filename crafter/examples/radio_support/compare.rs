@@ -9,6 +9,8 @@ use std::{
     fs::File,
     io::BufReader,
 };
+pub const REFERENCE_HT_CONFIGURATION_GAP: &str =
+    "reference HT format, STBC or extension-stream configuration unknown";
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EpochAnchor {
@@ -772,7 +774,7 @@ pub fn report(
     }
     let au: BTreeSet<_> = a.iter().map(|o| &o.bytes).collect();
     let bu: BTreeSet<_> = b.iter().map(|o| &o.bytes).collect();
-    json!({"schema":"crafter.radio.comparison/v2","families":families,"rates":rates,"status":if ac.eligible==0 || bc.eligible==0 {"inconclusive"}else{"measured"},"policy":p,"hackrf_valid_count":ac.eligible,"eligible_dongle_count":bc.eligible,"exact_matches":n,"hackrf_fraction":if ac.eligible==0 {None}else{Some(n as f64/ac.eligible as f64)},"dongle_fraction":if bc.eligible==0 {None}else{Some(n as f64/bc.eligible as f64)},"unique_byte_overlap":au.intersection(&bu).count(),"qualification_gaps":if bc.ht_unknown_configuration>0 {vec!["reference HT format, STBC or extension-stream configuration unknown"]}else{vec![]},"hackrf":ac,"reference":bc,"evidence":evidence,"matches":pairs,"target_assessed":false})
+    json!({"schema":"crafter.radio.comparison/v2","families":families,"rates":rates,"status":if ac.eligible==0 || bc.eligible==0 {"inconclusive"}else{"measured"},"policy":p,"hackrf_valid_count":ac.eligible,"eligible_dongle_count":bc.eligible,"exact_matches":n,"hackrf_fraction":if ac.eligible==0 {None}else{Some(n as f64/ac.eligible as f64)},"dongle_fraction":if bc.eligible==0 {None}else{Some(n as f64/bc.eligible as f64)},"unique_byte_overlap":au.intersection(&bu).count(),"qualification_gaps":if bc.ht_unknown_configuration>0 {vec![REFERENCE_HT_CONFIGURATION_GAP]}else{vec![]},"hackrf":ac,"reference":bc,"evidence":evidence,"matches":pairs,"target_assessed":false})
 }
 
 #[cfg(test)]
