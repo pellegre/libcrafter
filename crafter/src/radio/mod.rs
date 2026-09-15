@@ -52,7 +52,8 @@ pub use source::{RadioPacketSource, RadioReceiveMetadata};
 pub use tx::{
     EncodedSamples, EncodedWifiTransmission, IqSink, IqSinkOutcome, LegacyWifiPhy,
     LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OwnedSamples, PacketEncoder,
-    RadioPacketWriter, SampleCompletion, SampleFormat, WifiFcsPolicy, WifiTxEncoder,
+    RadioPacketWriter, SampleCompletion, SampleFormat, WifiFcsPolicy, WifiPacketEncoder,
+    WifiTxEncoder,
 };
 pub use wifi::{LegacyWifiDecoder, WifiDecoder};
 pub use windowed::{WindowedLegacyWifiDecoder, WindowedWifiDecoder};

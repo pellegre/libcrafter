@@ -43,7 +43,7 @@ pub enum WifiPhy {
 }
 
 /// Requested configuration. Monitor channel preparation remains external.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WifiInterfaceConfig {
     pub center_frequency_hz: u64,
     /// Optional channel number, checked against the requested frequency.
@@ -51,6 +51,10 @@ pub struct WifiInterfaceConfig {
     pub width_mhz: u16,
     pub directions: WifiDirections,
     pub transmit_phy: WifiPhy,
+    /// Optional full IQ encoder settings. Monitor drivers cannot express these.
+    /// The encoder's PHY must agree with `transmit_phy`.
+    #[cfg(feature = "radio")]
+    pub radio_encoder: Option<crate::radio::WifiPacketEncoder>,
 }
 impl Default for WifiInterfaceConfig {
     fn default() -> Self {
@@ -60,6 +64,8 @@ impl Default for WifiInterfaceConfig {
             width_mhz: 20,
             directions: WifiDirections::Both,
             transmit_phy: WifiPhy::Ofdm { rate_mbps: 6 },
+            #[cfg(feature = "radio")]
+            radio_encoder: None,
         }
     }
 }
@@ -97,6 +103,14 @@ impl WifiInterfaceConfig {
         }
         if !self.directions.transmit() {
             return Ok(());
+        }
+        #[cfg(feature = "radio")]
+        if self
+            .radio_encoder
+            .as_ref()
+            .is_some_and(|encoder| encoder_phy(encoder) != self.transmit_phy)
+        {
+            return Err(invalid("radio encoder PHY differs from interface request"));
         }
         match self.transmit_phy {
             WifiPhy::Ht20 {
@@ -191,7 +205,7 @@ pub enum WifiBackend {
 }
 
 /// Facts known at opening, without relabeling requests as observations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WifiInterfaceDescriptor {
     pub mode: InterfaceMode,
     pub packet_format: PacketFormat,
@@ -297,6 +311,19 @@ impl PacketWire {
     /// Open a normalized Wi-Fi interface. All downstream I/O uses existing traits.
     pub fn wifi(backend: WifiBackend, config: WifiInterfaceConfig) -> Result<Self> {
         config.validate()?;
+        #[cfg(feature = "radio")]
+        if config.directions.transmit()
+            && config.radio_encoder.is_some()
+            && matches!(
+                &backend,
+                WifiBackend::Monitor { .. } | WifiBackend::MonitorAdapters { .. }
+            )
+        {
+            return Err(unsupported(
+                "radio encoder overrides",
+                "monitor drivers do not accept IQ encoder settings",
+            ));
+        }
         let control = WifiInterfaceControl::default();
         #[cfg(feature = "radio")]
         let mut control = control;
@@ -599,72 +626,77 @@ impl crate::radio::IqSink<crate::radio::OwnedSamples> for SampleSink {
 }
 
 #[cfg(feature = "radio")]
-#[derive(Clone)]
-struct InterfaceEncoder(WifiPhy);
+fn default_encoder(phy: WifiPhy) -> crate::radio::RadioResult<crate::radio::WifiPacketEncoder> {
+    use crate::radio::*;
+    Ok(match phy {
+        WifiPhy::Ofdm { rate_mbps } => {
+            let rate = LegacyOfdmRate::ALL
+                .into_iter()
+                .find(|r| r.mbps() == rate_mbps)
+                .expect("validated rate");
+            WifiPacketEncoder::Legacy(LegacyWifiTxConfig::ofdm(rate))
+        }
+        WifiPhy::DsssCck {
+            rate_500kbps,
+            short_preamble,
+        } => {
+            let rate = match rate_500kbps {
+                2 => LegacyDsssCckRate::Mbps1,
+                4 => LegacyDsssCckRate::Mbps2,
+                11 => LegacyDsssCckRate::Mbps5_5,
+                _ => LegacyDsssCckRate::Mbps11,
+            };
+            WifiPacketEncoder::Legacy(LegacyWifiTxConfig::dsss_cck(
+                rate,
+                if short_preamble {
+                    DsssPreamble::Short
+                } else {
+                    DsssPreamble::Long
+                },
+            ))
+        }
+        WifiPhy::Ht20 {
+            mcs,
+            short_guard,
+            greenfield,
+            ldpc,
+        } => {
+            let mut config = HtTxConfig::new(HtMcs::try_from(mcs)?);
+            config.guard_interval = if short_guard {
+                HtGuardInterval::Short
+            } else {
+                HtGuardInterval::Long
+            };
+            config.format = if greenfield {
+                HtFormat::Greenfield
+            } else {
+                HtFormat::Mixed
+            };
+            config.coding = if ldpc { HtCoding::Ldpc } else { HtCoding::Bcc };
+            WifiPacketEncoder::Ht20(config)
+        }
+    })
+}
+
 #[cfg(feature = "radio")]
-impl crate::radio::PacketEncoder for InterfaceEncoder {
-    type Transmission = crate::radio::OwnedSamples;
-    fn encode_packet(
-        &self,
-        record: &PacketRecord,
-    ) -> crate::radio::RadioResult<Self::Transmission> {
-        use crate::radio::*;
-        let (cs8, sample_rate_hz) = match self.0 {
-            WifiPhy::Ofdm { rate_mbps } => {
-                let rate = LegacyOfdmRate::ALL
-                    .into_iter()
-                    .find(|r| r.mbps() == rate_mbps)
-                    .expect("validated rate");
-                let tx = LegacyWifiTxConfig::ofdm(rate).encode_packet(record)?;
-                (tx.samples_cs8().to_vec(), tx.sample_rate_hz())
-            }
-            WifiPhy::DsssCck {
-                rate_500kbps,
-                short_preamble,
-            } => {
-                let rate = match rate_500kbps {
-                    2 => LegacyDsssCckRate::Mbps1,
-                    4 => LegacyDsssCckRate::Mbps2,
-                    11 => LegacyDsssCckRate::Mbps5_5,
-                    _ => LegacyDsssCckRate::Mbps11,
-                };
-                let tx = LegacyWifiTxConfig::dsss_cck(
-                    rate,
-                    if short_preamble {
-                        DsssPreamble::Short
-                    } else {
-                        DsssPreamble::Long
-                    },
-                )
-                .encode_packet(record)?;
-                (tx.samples_cs8().to_vec(), tx.sample_rate_hz())
-            }
-            WifiPhy::Ht20 {
-                mcs,
-                short_guard,
-                greenfield,
-                ldpc,
-            } => {
-                let mut config = HtTxConfig::new(HtMcs::try_from(mcs)?);
-                config.guard_interval = if short_guard {
-                    HtGuardInterval::Short
-                } else {
-                    HtGuardInterval::Long
-                };
-                config.format = if greenfield {
-                    HtFormat::Greenfield
-                } else {
-                    HtFormat::Mixed
-                };
-                config.coding = if ldpc { HtCoding::Ldpc } else { HtCoding::Bcc };
-                let tx = config.encode_packet(record)?;
-                (tx.samples_cs8().to_vec(), tx.sample_rate_hz())
-            }
-        };
-        Ok(OwnedSamples {
-            cs8,
-            sample_rate_hz,
-        })
+fn encoder_phy(encoder: &crate::radio::WifiPacketEncoder) -> WifiPhy {
+    use crate::radio::*;
+    match encoder {
+        WifiPacketEncoder::Legacy(config) => match config.phy {
+            LegacyWifiPhy::Ofdm(rate) => WifiPhy::Ofdm {
+                rate_mbps: rate.mbps(),
+            },
+            LegacyWifiPhy::DsssCck { rate, preamble } => WifiPhy::DsssCck {
+                rate_500kbps: (rate.bps() / 500_000) as u8,
+                short_preamble: preamble.is_short(),
+            },
+        },
+        WifiPacketEncoder::Ht20(config) => WifiPhy::Ht20 {
+            mcs: config.mcs.index(),
+            short_guard: config.guard_interval == HtGuardInterval::Short,
+            greenfield: config.format == HtFormat::Greenfield,
+            ldpc: config.coding == HtCoding::Ldpc,
+        },
     }
 }
 
@@ -717,9 +749,17 @@ fn radio_adapters(
         })
         .transpose()
         .map_err(radio_error)?;
-    let writer = sink.map(|sink| {
+    let encoder = if config.directions.transmit() {
+        Some(match &config.radio_encoder {
+            Some(encoder) => encoder.clone(),
+            None => default_encoder(config.transmit_phy).map_err(radio_error)?,
+        })
+    } else {
+        None
+    };
+    let writer = sink.filter(|_| config.directions.transmit()).map(|sink| {
         Box::new(RadioPacketWriter::new(
-            InterfaceEncoder(config.transmit_phy),
+            encoder.expect("transmit encoder constructed above"),
             SampleSink {
                 inner: sink,
                 control: control.clone(),
