@@ -1,5 +1,11 @@
 //! Combined receive-only legacy PHY dispatch.
-use super::*;
+use super::super::{
+    codec::{DecodeOutput, PhyDecoder, PhyDiagnostic, RecoveredFrame, ResetReason},
+    data::{DecoderStats, LegacyOfdmDecoder},
+    dsss::DsssCckDecoder,
+    error::{RadioError, RadioResult},
+    transport::{IqChunk, IqContinuity, IqEvent},
+};
 
 /// Combined legacy and HT20 one-stream BCC/LDPC receiver.
 ///
@@ -178,7 +184,7 @@ impl PhyDecoder for LegacyWifiDecoder {
         Ok(out)
     }
 }
-pub(super) fn same_occurrence(a: &RecoveredFrame, b: &RecoveredFrame) -> bool {
+pub(in crate::radio) fn same_occurrence(a: &RecoveredFrame, b: &RecoveredFrame) -> bool {
     a.start.epoch == b.start.epoch
         && a.start.sample_index == b.start.sample_index
         && a.end_sample_index == b.end_sample_index
