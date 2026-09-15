@@ -1,0 +1,236 @@
+{
+  "cases": [
+    {
+      "capture_hex": "0800000002005e00530102005e00530202005e00530330001723456789",
+      "captured_len": 29,
+      "expected": {
+        "driver_failed_fcs": null,
+        "fcs": {
+          "bytes_hex": "",
+          "state": "unknown",
+          "valid": null
+        },
+        "hardware_decrypted": null,
+        "normalized_hex": "0800000002005e00530102005e00530202005e00530330001723456789",
+        "padding_hex": ""
+      },
+      "link_type": 105,
+      "monitor_tx_hex": "00000800000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "name": "bare-unknown",
+      "original_len": 29,
+      "timestamp": {
+        "micros": 456,
+        "seconds": 123
+      }
+    },
+    {
+      "capture_hex": "00000800000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "captured_len": 37,
+      "expected": {
+        "driver_failed_fcs": null,
+        "fcs": {
+          "bytes_hex": "",
+          "state": "unknown",
+          "valid": null
+        },
+        "hardware_decrypted": null,
+        "normalized_hex": "0800000002005e00530102005e00530202005e00530330001723456789",
+        "padding_hex": ""
+      },
+      "link_type": 127,
+      "monitor_tx_hex": "00000800000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "name": "radiotap-unknown",
+      "original_len": 37,
+      "timestamp": {
+        "micros": 456,
+        "seconds": 123
+      }
+    },
+    {
+      "capture_hex": "0000090002000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "captured_len": 38,
+      "expected": {
+        "driver_failed_fcs": false,
+        "fcs": {
+          "bytes_hex": "",
+          "state": "absent",
+          "valid": null
+        },
+        "hardware_decrypted": null,
+        "normalized_hex": "0800000002005e00530102005e00530202005e00530330001723456789",
+        "padding_hex": ""
+      },
+      "link_type": 127,
+      "monitor_tx_hex": "00000800000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "name": "radiotap-absent",
+      "original_len": 38,
+      "timestamp": {
+        "micros": 456,
+        "seconds": 123
+      }
+    },
+    {
+      "capture_hex": "0000090002000000100800000002005e00530102005e00530202005e00530330001723456789af783df3",
+      "captured_len": 42,
+      "expected": {
+        "driver_failed_fcs": false,
+        "fcs": {
+          "bytes_hex": "af783df3",
+          "state": "present",
+          "valid": true
+        },
+        "hardware_decrypted": null,
+        "normalized_hex": "0800000002005e00530102005e00530202005e00530330001723456789",
+        "padding_hex": ""
+      },
+      "link_type": 127,
+      "monitor_tx_hex": "00000800000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "name": "radiotap-valid",
+      "original_len": 42,
+      "timestamp": {
+        "micros": 456,
+        "seconds": 123
+      }
+    },
+    {
+      "capture_hex": "0000090002000000500800000002005e00530102005e00530202005e00530330001723456789ae783df3",
+      "captured_len": 42,
+      "expected": {
+        "driver_failed_fcs": true,
+        "fcs": {
+          "bytes_hex": "ae783df3",
+          "state": "present",
+          "valid": false
+        },
+        "hardware_decrypted": null,
+        "normalized_hex": "0800000002005e00530102005e00530202005e00530330001723456789",
+        "padding_hex": ""
+      },
+      "link_type": 127,
+      "monitor_tx_hex": "00000800000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "name": "radiotap-invalid",
+      "original_len": 42,
+      "timestamp": {
+        "micros": 456,
+        "seconds": 123
+      }
+    },
+    {
+      "capture_hex": "0000090002000000308800000002005e00530102005e00530202005e00530330000300a55a17234567892afcc94a",
+      "captured_len": 46,
+      "expected": {
+        "driver_failed_fcs": false,
+        "fcs": {
+          "bytes_hex": "2afcc94a",
+          "state": "present",
+          "valid": true
+        },
+        "hardware_decrypted": null,
+        "normalized_hex": "8800000002005e00530102005e00530202005e005303300003001723456789",
+        "padding_hex": "a55a"
+      },
+      "link_type": 127,
+      "monitor_tx_hex": "00000800000000008800000002005e00530102005e00530202005e005303300003001723456789",
+      "name": "qos-padding-valid",
+      "original_len": 46,
+      "timestamp": {
+        "micros": 456,
+        "seconds": 123
+      }
+    },
+    {
+      "capture_hex": "0000090002000000100800000002005e00530102005e00530202005e00530330001723456789af783d",
+      "captured_len": 41,
+      "expected": {
+        "driver_failed_fcs": false,
+        "fcs": {
+          "bytes_hex": "af783d",
+          "state": "truncated",
+          "valid": null
+        },
+        "hardware_decrypted": null,
+        "normalized_hex": "0800000002005e00530102005e00530202005e00530330001723456789",
+        "padding_hex": ""
+      },
+      "link_type": 127,
+      "monitor_tx_hex": "00000800000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "name": "radiotap-truncated-1",
+      "original_len": 42,
+      "timestamp": {
+        "micros": 456,
+        "seconds": 123
+      }
+    },
+    {
+      "capture_hex": "0000090002000000100800000002005e00530102005e00530202005e00530330001723456789af78",
+      "captured_len": 40,
+      "expected": {
+        "driver_failed_fcs": false,
+        "fcs": {
+          "bytes_hex": "af78",
+          "state": "truncated",
+          "valid": null
+        },
+        "hardware_decrypted": null,
+        "normalized_hex": "0800000002005e00530102005e00530202005e00530330001723456789",
+        "padding_hex": ""
+      },
+      "link_type": 127,
+      "monitor_tx_hex": "00000800000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "name": "radiotap-truncated-2",
+      "original_len": 42,
+      "timestamp": {
+        "micros": 456,
+        "seconds": 123
+      }
+    },
+    {
+      "capture_hex": "0000090002000000100800000002005e00530102005e00530202005e00530330001723456789af",
+      "captured_len": 39,
+      "expected": {
+        "driver_failed_fcs": false,
+        "fcs": {
+          "bytes_hex": "af",
+          "state": "truncated",
+          "valid": null
+        },
+        "hardware_decrypted": null,
+        "normalized_hex": "0800000002005e00530102005e00530202005e00530330001723456789",
+        "padding_hex": ""
+      },
+      "link_type": 127,
+      "monitor_tx_hex": "00000800000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "name": "radiotap-truncated-3",
+      "original_len": 42,
+      "timestamp": {
+        "micros": 456,
+        "seconds": 123
+      }
+    },
+    {
+      "capture_hex": "0000090002000000100800000002005e00530102005e00530202005e00530330001723456789",
+      "captured_len": 38,
+      "expected": {
+        "driver_failed_fcs": false,
+        "fcs": {
+          "bytes_hex": "",
+          "state": "truncated",
+          "valid": null
+        },
+        "hardware_decrypted": null,
+        "normalized_hex": "0800000002005e00530102005e00530202005e00530330001723456789",
+        "padding_hex": ""
+      },
+      "link_type": 127,
+      "monitor_tx_hex": "00000800000000000800000002005e00530102005e00530202005e00530330001723456789",
+      "name": "radiotap-truncated-4",
+      "original_len": 42,
+      "timestamp": {
+        "micros": 456,
+        "seconds": 123
+      }
+    }
+  ],
+  "generator": "independent-dot11/v1",
+  "schema": "crafter.packet-interface.references/v1"
+}

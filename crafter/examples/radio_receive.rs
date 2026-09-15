@@ -1,6 +1,8 @@
 //! Offline by default; explicit bounded receive-only native mode. See docs/radio.md.
 #[path = "radio_support/artifact.rs"]
 mod artifact;
+#[path = "radio_support/interface_receive.rs"]
+mod interface_receive;
 use artifact::*;
 use crafter::{
     radio::*,
@@ -553,6 +555,9 @@ fn capture_only(source: &mut impl IqSource) -> Result<()> {
 
 fn main() -> Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--interface") {
+        return interface_receive::run(&args[1..]);
+    }
     if args.first().map(String::as_str) == Some("--benchmark-artifact") {
         return match args.as_slice() {
             [_, path, mode] => benchmark::run(path, mode, None),

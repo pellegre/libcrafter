@@ -214,6 +214,9 @@ pub struct WifiInterfaceStatus {
     pub transmit_error: Option<String>,
     #[cfg(feature = "radio")]
     pub radio_end: Option<crate::radio::StreamEnd>,
+    /// Actual codec counters, including recovered frames that failed packet parsing.
+    #[cfg(feature = "radio")]
+    pub decoder_stats: Option<crate::radio::DecoderStats>,
 }
 
 /// Retain this handle before consuming the opened wire with `split`.
@@ -558,11 +561,17 @@ impl PacketSource for DecodedSource {
         } else {
             self.inner.next_record()
         };
-        self.control
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .radio_end = self.inner.end();
+        let mut state = self.control.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.radio_end = self.inner.end();
+        let a = self.inner.decoder().ofdm_stats();
+        let b = self.inner.decoder().dsss_stats();
+        state.decoder_stats = Some(crate::radio::DecoderStats {
+            valid_frames: a.valid_frames.saturating_add(b.valid_frames),
+            invalid_fcs: a.invalid_fcs.saturating_add(b.invalid_fcs),
+            rejected_frames: a.rejected_frames.saturating_add(b.rejected_frames),
+            truncated_frames: a.truncated_frames.saturating_add(b.truncated_frames),
+            dropped_frames: a.dropped_frames.saturating_add(b.dropped_frames),
+        });
         result
     }
 }
