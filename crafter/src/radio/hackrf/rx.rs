@@ -1,15 +1,16 @@
 //! Bounded receive supervisor; native calls are isolated in `native`.
-use super::*;
+#[cfg(feature = "radio-hackrf")]
+use super::native;
+use crate::radio::{
+    Discontinuity, GapReason, IqChunk, IqEvent, IqPosition, IqSource, RadioError, RadioResult,
+    RxConfig, SampleLoss, StreamEnd,
+};
 use std::{
     collections::VecDeque,
     sync::{Arc, Condvar, Mutex, MutexGuard},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-#[cfg(feature = "radio-hackrf")]
-#[allow(unsafe_code)]
-pub(super) mod native;
-
 /// All live settings must be supplied. Construction of this value opens nothing.
 #[derive(Clone, Debug)]
 pub struct HackRfConfig {
@@ -79,7 +80,7 @@ struct State {
     fault: Option<RadioError>,
     stats: HackRfStats,
 }
-struct Shared {
+pub(super) struct Shared {
     config: RxConfig,
     start: Instant,
     state: Mutex<State>,
@@ -97,7 +98,7 @@ impl Shared {
         });
     }
     /// Callback copies all accepted bytes before returning. No native calls here.
-    fn receive(&self, bytes: &[i8]) -> bool {
+    pub(super) fn receive(&self, bytes: &[i8]) -> bool {
         let mut s = self.lock();
         if s.stop || s.cancelled {
             return false;
@@ -159,6 +160,12 @@ impl Shared {
         self.wake.notify_all();
         true
     }
+    pub(super) fn reject_invalid_transfer(&self) {
+        let mut state = self.lock();
+        state.stop = true;
+        state.fault = Some(RadioError::Source("invalid HackRF transfer buffer".into()));
+        Self::gap(&mut state, GapReason::SourceLoss);
+    }
     fn discard_pending(s: &mut State) {
         while let Some(chunk) = s.pending.pop_front() {
             s.buffered -= chunk.len();
@@ -207,7 +214,7 @@ impl Shared {
 }
 // Created and used entirely on the supervisor thread; raw native handles never
 // need a Send implementation. stop must quiesce callbacks before releasing ctx.
-trait Driver {
+pub(super) trait Driver {
     fn start(&mut self, shared: Arc<Shared>) -> RadioResult<()>;
     fn counters(&mut self) -> RadioResult<(u32, u32)>;
     fn streaming(&mut self) -> bool;

@@ -7,10 +7,6 @@ mod codec;
 mod error;
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf;
-#[cfg(feature = "radio-hackrf")]
-mod hackrf_duplex;
-#[cfg(any(feature = "radio-hackrf", test))]
-mod hackrf_tx;
 mod packet;
 mod transport;
 mod wifi;
@@ -21,14 +17,11 @@ pub use codec::{
 };
 pub use error::{RadioError, RadioResult};
 #[cfg(feature = "radio-hackrf")]
-pub use hackrf::{HackRfConfig, HackRfSource, HackRfStats};
-#[cfg(feature = "radio-hackrf")]
-pub use hackrf_duplex::{
-    HackRfDirection, HackRfDuplex, HackRfDuplexControl, HackRfDuplexSink, HackRfDuplexSource,
-    HackRfDuplexStatus,
+pub use hackrf::{
+    HackRfConfig, HackRfDirection, HackRfDuplex, HackRfDuplexControl, HackRfDuplexSink,
+    HackRfDuplexSource, HackRfDuplexStatus, HackRfSource, HackRfStats, HackRfTxConfig,
+    HackRfTxSink, HackRfTxStats,
 };
-#[cfg(feature = "radio-hackrf")]
-pub use hackrf_tx::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
 pub use packet::{PacketEncoder, RadioPacketSource, RadioPacketWriter, RadioReceiveMetadata};
 pub use transport::{
     ComplexSample, Discontinuity, EncodedSamples, GapReason, IqChunk, IqContinuity, IqEvent,

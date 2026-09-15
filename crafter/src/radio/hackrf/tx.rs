@@ -1,8 +1,10 @@
 //! Explicit, bounded HackRF transmission of protocol-independent samples.
 
 #[cfg(feature = "radio-hackrf")]
-use super::{EncodedSamples, IqSink, IqSinkOutcome, SampleCompletion};
-use super::{RadioError, RadioResult};
+use super::native::{NativeTx, SharedDevice};
+#[cfg(feature = "radio-hackrf")]
+use crate::radio::{EncodedSamples, IqSink, IqSinkOutcome, SampleCompletion};
+use crate::radio::{RadioError, RadioResult};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -219,7 +221,8 @@ impl TxShared {
         Some(valid_length)
     }
 
-    pub(super) fn done(&self) -> bool {
+    #[cfg(test)]
+    fn done(&self) -> bool {
         self.lock().done
     }
     pub(super) fn cancel_requested(&self) -> bool {
@@ -279,18 +282,18 @@ pub struct HackRfTxSink {
     last_stats: Option<HackRfTxStats>,
     reset_cancellation: bool,
     #[cfg(feature = "radio-hackrf")]
-    native: super::hackrf::native::NativeTx,
+    native: NativeTx,
 }
 
 impl HackRfTxSink {
     #[cfg(feature = "radio-hackrf")]
     pub(super) fn shared(
         config: HackRfTxConfig,
-        device: super::hackrf::native::SharedDevice,
+        device: SharedDevice,
         cancelled: Arc<AtomicBool>,
     ) -> Self {
         Self {
-            native: super::hackrf::native::NativeTx::shared(config.clone(), device),
+            native: NativeTx::shared(config.clone(), device),
             config,
             cancelled,
             last_stats: None,
@@ -300,7 +303,7 @@ impl HackRfTxSink {
     #[cfg(feature = "radio-hackrf")]
     pub fn open_live(config: HackRfTxConfig) -> RadioResult<Self> {
         config.validate()?;
-        let native = super::hackrf::native::NativeTx::open(&config)?;
+        let native = NativeTx::open(&config)?;
         Ok(Self {
             config,
             cancelled: Arc::new(AtomicBool::new(false)),
