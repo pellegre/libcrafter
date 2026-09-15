@@ -1,6 +1,7 @@
 //! Deterministic legacy DSSS/CCK transmission (IEEE 802.11-2007 clauses 15 and 18).
 
-use super::{RadioError, RadioResult};
+use super::crc16;
+use crate::radio::error::{RadioError, RadioResult};
 use std::f64::consts::PI;
 
 const SAMPLE_RATE_HZ: u32 = 20_000_000;
@@ -498,17 +499,6 @@ fn quantize(chips: &[Complex], sample_count: usize, config: &LegacyDsssCckTxConf
         }
     }
     out
-}
-
-fn crc16(bytes: &[u8]) -> u16 {
-    let mut crc = 0xffffu16;
-    for byte in bytes {
-        crc ^= u16::from(*byte);
-        for _ in 0..8 {
-            crc = (crc >> 1) ^ (0x8408 & 0u16.wrapping_sub(crc & 1));
-        }
-    }
-    !crc
 }
 
 fn crc32(bytes: &[u8]) -> u32 {
