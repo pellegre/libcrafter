@@ -1,6 +1,9 @@
 //! Incremental offline cs8 replay. Timing comes only from supplied metadata.
-use super::*;
+use super::super::error::{RadioError, RadioResult};
+use super::source::*;
 use std::io::{Cursor, Read};
+#[cfg(test)]
+use std::time::{Duration, SystemTime};
 
 /// Offline source over any blocking reader. A short read is not EOF. After an
 /// error the source repeats that error until cancellation; partial data from a
@@ -179,7 +182,7 @@ mod tests {
             discontinuity: None,
         }
     }
-    const FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/iq/ramp.cs8");
+    const FIXTURE: &[u8] = include_bytes!("../../../tests/fixtures/iq/ramp.cs8");
     struct Short {
         inner: Cursor<Vec<u8>>,
         interrupted: bool,

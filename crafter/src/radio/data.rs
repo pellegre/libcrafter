@@ -4,6 +4,7 @@ use super::{
     sync::{fft64, Acquisition, SyncEvent, Synchronizer},
     *,
 };
+use crate::LinkType;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DecoderStats {
@@ -964,6 +965,7 @@ pub(super) fn valid_fcs(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     #[test]
     fn radio_ht_bcc_independent_payload_kernel() {
         use sha2::{Digest, Sha256};

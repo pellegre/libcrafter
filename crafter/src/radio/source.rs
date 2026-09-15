@@ -6,7 +6,7 @@ use crate::wire::{
     BackendKind, CaptureFcs, PacketMetadata, PacketOrigin, PacketRecord, PacketSource,
     WifiCaptureMetadata, WireError,
 };
-use crate::{CrafterError, Packet};
+use crate::{CrafterError, LinkType, Packet};
 
 /// RF context retained independently from the packet's Wi-Fi annotations.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,7 +184,10 @@ mod tests {
     use super::*;
     use crate::wire::{Dot11Metadata, Sniffer};
     use crate::Dot11;
-    use std::io::Cursor;
+    use std::{
+        io::Cursor,
+        time::{Duration, SystemTime},
+    };
 
     fn config() -> RxConfig {
         RxConfig {

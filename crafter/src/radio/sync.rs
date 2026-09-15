@@ -359,6 +359,7 @@ impl Synchronizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     #[test]
     fn radio_sync_incremental_correlation_matches_direct_window() {
         let mut sync = Synchronizer::default();
