@@ -1,5 +1,14 @@
 //! Coarse-grained parallel Wi-Fi decoding over bounded overlapping time windows.
-use super::*;
+use super::{
+    dsss::DsssCckDecoder,
+    ofdm::{DecoderStats, LegacyOfdmDecoder},
+    LegacyWifiDecoder,
+};
+use crate::radio::{
+    codec::{DecodeOutput, PhyDecoder, PhyDiagnostic, RecoveredFrame, ResetReason},
+    error::{RadioError, RadioResult},
+    transport::{IqChunk, IqContinuity, IqEvent, IqPosition, RxConfig},
+};
 use std::{
     collections::BTreeMap,
     sync::{mpsc, Arc, Mutex},
@@ -661,6 +670,7 @@ impl PhyDecoder for WindowedWifiDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::radio::transport::StreamEnd;
     use std::time::Duration;
 
     #[test]
@@ -688,7 +698,7 @@ mod tests {
         for (ordinal, cs8, boundary) in [
             (
                 0,
-                include_bytes!("../../tests/fixtures/iq/ofdm-6-truncated.cs8")
+                include_bytes!("../../../tests/fixtures/iq/ofdm-6-truncated.cs8")
                     .iter()
                     .map(|b| *b as i8)
                     .collect::<Vec<_>>(),

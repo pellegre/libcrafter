@@ -1,6 +1,14 @@
 //! Bounded parallel Wi-Fi PHY dispatch; sources and packet parsing stay unchanged.
-use super::wifi::same_occurrence;
-use super::*;
+use super::{
+    dsss::DsssCckDecoder,
+    ofdm::{DecoderStats, LegacyOfdmDecoder},
+    same_occurrence,
+};
+use crate::radio::{
+    codec::{DecodeOutput, PhyDecoder, PhyDiagnostic, RecoveredFrame, ResetReason},
+    error::{RadioError, RadioResult},
+    transport::{IqChunk, IqContinuity, IqEvent, RxConfig},
+};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -260,7 +268,7 @@ fn process(
 
 /// Persistent PHY workers sharing one owned input chunk and one output budget.
 ///
-/// Implements the same [`PhyDecoder`] boundary as [`LegacyWifiDecoder`]. No device
+/// Implements the same [`PhyDecoder`] boundary as [`crate::radio::LegacyWifiDecoder`]. No device
 /// is opened. Dispatch retains 128-sample slice coordinates and completion order.
 /// Each call waits for all workers, so no input backlog is hidden in the decoder.
 /// A failed worker channel is terminal; construct a new decoder to recover it.
@@ -477,7 +485,7 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
 /// The OFDM worker enables HT20 decoding while the independent DSSS/CCK worker
 /// retains reception of legacy 2.4 GHz traffic. `with_parallel_dsss` assigns
 /// each DSSS acquisition phase to its own worker. Both constructors preserve
-/// the same bounded [`PhyDecoder`] contract as [`WifiDecoder`].
+/// the same bounded [`PhyDecoder`] contract as [`crate::radio::WifiDecoder`].
 pub struct ParallelWifiDecoder {
     inner: ParallelLegacyWifiDecoder,
 }
@@ -517,6 +525,7 @@ impl PhyDecoder for ParallelWifiDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::radio::transport::{IqPosition, StreamEnd};
     struct FailedReset;
     impl PhyDecoder for FailedReset {
         fn consume(&mut self, _: IqEvent) -> RadioResult<DecodeOutput> {
@@ -528,7 +537,7 @@ mod tests {
     }
     #[test]
     fn split_collector_coalesces_overlapping_phase_locks_across_chunks() {
-        let bytes = include_bytes!("../../tests/fixtures/iq/dsss-20-short-clean-48.cs8");
+        let bytes = include_bytes!("../../../tests/fixtures/iq/dsss-20-short-clean-48.cs8");
         let config = RxConfig {
             sample_rate_hz: 20_000_000,
             center_frequency_hz: 2_437_000_000,

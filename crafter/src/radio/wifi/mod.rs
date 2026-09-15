@@ -4,7 +4,9 @@ mod decoder;
 mod dsss;
 pub(in crate::radio) mod ht;
 pub(in crate::radio) mod ofdm;
+mod parallel;
 mod tx;
+mod windowed;
 
 pub(in crate::radio) use decoder::same_occurrence;
 pub use decoder::{LegacyWifiDecoder, WifiDecoder};
@@ -20,7 +22,9 @@ pub use ofdm::{
     DecoderStats, LegacyOfdmDecoder, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
     OfdmSignalFields, SignalInfo,
 };
+pub use parallel::{ParallelLegacyWifiDecoder, ParallelWifiDecoder};
 pub use tx::{
     EncodedWifiTransmission, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig,
     WifiFcsPolicy, WifiPacketEncoder, WifiTxEncoder,
 };
+pub use windowed::{WindowedLegacyWifiDecoder, WindowedWifiDecoder};
