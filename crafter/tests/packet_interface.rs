@@ -12,6 +12,250 @@ fn timestamp() -> PcapTimestamp {
     PcapTimestamp::new(123, 456, TimestampPrecision::Microseconds).unwrap()
 }
 
+fn monitor_backend() -> WifiBackend {
+    let packet =
+        Packet::decode_from_link(LinkType::Radiotap, &radiotap(&data_frame(), None)).unwrap();
+    WifiBackend::MonitorAdapters {
+        source: Some(Box::new(VecPacketSource::from_packets([packet]))),
+        writer: Some(Box::new(MemoryPacketWriter::dry_run())),
+        framing: LinkType::Radiotap,
+        radiotap_override: None,
+    }
+}
+
+// Backend choice is the only input which differs between monitor and IQ callers.
+fn shared_receive_send(backend: WifiBackend) -> (PacketRecord, WriteReport, WifiInterfaceStatus) {
+    let wire = PacketWire::wifi(backend, WifiInterfaceConfig::default()).unwrap();
+    let descriptor = wire.wifi_descriptor().unwrap();
+    assert_eq!(descriptor.packet_format, PacketFormat::Dot11);
+    let generic = wire.descriptor();
+    assert_eq!(generic.packet_format, Some(PacketFormat::Dot11));
+    assert_eq!(generic.mode, Some(descriptor.mode));
+    assert!(generic.receive && generic.transmit);
+    assert_eq!(descriptor.observed_frequency_hz, None);
+    let control = wire.wifi_control().unwrap();
+    let (mut source, mut writer) = wire.split().unwrap();
+    let record = source.next_record().unwrap().unwrap();
+    let report = writer.write_record(&record).unwrap();
+    assert!(source.next_record().unwrap().is_none());
+    (record, report, control.status())
+}
+
+#[test]
+fn opened_monitor_uses_shared_pipeline_and_controls_survive_split() {
+    let (record, report, status) = shared_receive_send(monitor_backend());
+    assert_eq!(record.packet().compile().unwrap().as_bytes(), data_frame());
+    assert!(report.is_dry_run());
+    assert_eq!(status.received_records, 1);
+    assert_eq!(status.submitted_records, 1);
+    assert!(status.receive_ended);
+
+    let wire = PacketWire::wifi(monitor_backend(), WifiInterfaceConfig::default()).unwrap();
+    let control = wire.wifi_control().unwrap();
+    let (mut source, mut writer) = wire.split().unwrap();
+    control.cancel();
+    assert!(source.next_record().unwrap().is_none());
+    assert!(writer
+        .write_record(&record)
+        .unwrap_err()
+        .to_string()
+        .contains("cancelled"));
+    assert!(control.status().cancelled);
+    assert_eq!(control.status().received_records, 0);
+}
+
+#[test]
+fn opened_interface_rejects_inconsistent_and_unsupported_configuration() {
+    for config in [
+        WifiInterfaceConfig {
+            width_mhz: 40,
+            ..WifiInterfaceConfig::default()
+        },
+        WifiInterfaceConfig {
+            channel: Some(1),
+            ..WifiInterfaceConfig::default()
+        },
+        WifiInterfaceConfig {
+            transmit_phy: WifiPhy::Ofdm { rate_mbps: 7 },
+            ..WifiInterfaceConfig::default()
+        },
+    ] {
+        assert!(PacketWire::wifi(monitor_backend(), config).is_err());
+    }
+    let missing = WifiBackend::MonitorAdapters {
+        source: None,
+        writer: None,
+        framing: LinkType::Radiotap,
+        radiotap_override: None,
+    };
+    assert!(matches!(
+        PacketWire::wifi(missing, WifiInterfaceConfig::default()),
+        Err(WireError::UnsupportedCapability {
+            capability: "read",
+            ..
+        })
+    ));
+    let config = WifiInterfaceConfig {
+        directions: WifiDirections::Receive,
+        ..WifiInterfaceConfig::default()
+    };
+    let wire = PacketWire::wifi(monitor_backend(), config).unwrap();
+    assert!(wire.has_source());
+    assert!(!wire.has_writer());
+}
+
+#[test]
+fn source_and_writer_failures_remain_inspectable() {
+    struct FailureSource;
+    impl PacketSource for FailureSource {
+        fn next_record(&mut self) -> crafter::wire::Result<Option<PacketRecord>> {
+            Err(WireError::backend("fixture", "receive", "source failed"))
+        }
+    }
+    struct FailureWriter;
+    impl PacketWriter for FailureWriter {
+        fn write_record(&mut self, _: &PacketRecord) -> crafter::wire::Result<WriteReport> {
+            Err(WireError::backend("fixture", "write", "sink failed"))
+        }
+    }
+    let backend = WifiBackend::MonitorAdapters {
+        source: Some(Box::new(FailureSource)),
+        writer: Some(Box::new(FailureWriter)),
+        framing: LinkType::Radiotap,
+        radiotap_override: None,
+    };
+    let wire = PacketWire::wifi(backend, WifiInterfaceConfig::default()).unwrap();
+    let control = wire.wifi_control().unwrap();
+    let (mut source, mut writer) = wire.split().unwrap();
+    assert!(source.next_record().is_err());
+    let record =
+        PacketRecord::new(Packet::decode_from_link(LinkType::Ieee80211, &data_frame()).unwrap());
+    assert!(writer.write_record(&record).is_err());
+    assert!(control
+        .status()
+        .receive_error
+        .unwrap()
+        .contains("source failed"));
+    assert!(control
+        .status()
+        .transmit_error
+        .unwrap()
+        .contains("sink failed"));
+}
+
+#[cfg(not(feature = "radio-hackrf"))]
+#[test]
+fn hackrf_selection_reports_the_disabled_feature() {
+    let error = PacketWire::wifi(WifiBackend::HackRf, WifiInterfaceConfig::default()).unwrap_err();
+    assert!(matches!(
+        error,
+        WireError::UnsupportedCapability {
+            capability: "HackRF",
+            ..
+        }
+    ));
+    assert!(error.to_string().contains("radio-hackrf"));
+}
+
+#[cfg(feature = "radio")]
+#[test]
+fn iq_and_monitor_use_identical_receive_send_code() {
+    use crafter::radio::{IqPosition, RxConfig};
+    let packet = Packet::decode_from_link(LinkType::Ieee80211, &data_frame()).unwrap();
+    let tx = RadioPacketWriter::new(
+        LegacyWifiTxConfig::ofdm(LegacyOfdmRate::Mbps6),
+        MemoryIqSink::new(),
+    )
+    .encode_record(&PacketRecord::new(packet))
+    .unwrap();
+    let bounds = RxConfig {
+        sample_rate_hz: 20_000_000,
+        center_frequency_hz: 2_437_000_000,
+        max_chunk_samples: 20_000,
+        max_buffer_samples: 400_000,
+        max_frame_bytes: 4095,
+        max_pending_frames: 4,
+        max_capture_samples: 1_000_000,
+        max_duration: std::time::Duration::from_secs(1),
+    };
+    let position = IqPosition {
+        epoch: 0,
+        sequence: 0,
+        sample_index: 0,
+        time_anchor: None,
+        discontinuity: None,
+    };
+    let source =
+        crafter::radio::MemoryIqSource::from_cs8(tx.cs8().to_vec(), bounds.clone(), position)
+            .unwrap();
+    let backend = WifiBackend::RadioAdapters {
+        source: Some(Box::new(source)),
+        sink: Some(Box::new(MemoryIqSink::<crafter::radio::OwnedSamples>::new())),
+        bounds,
+    };
+    let (radio, report, status) = shared_receive_send(backend);
+    let (monitor, _, _) = shared_receive_send(monitor_backend());
+    assert_eq!(
+        radio.packet().compile().unwrap().as_bytes(),
+        monitor.packet().compile().unwrap().as_bytes()
+    );
+    assert!(radio.metadata().radio().is_some());
+    assert_eq!(status.received_records, 1);
+    assert_eq!(
+        report.radio_outcome().unwrap().completion,
+        crafter::radio::SampleCompletion::Stored
+    );
+    assert_eq!(status.radio_end, Some(crafter::radio::StreamEnd::Eof));
+}
+
+#[cfg(feature = "radio")]
+#[test]
+fn common_control_cancels_idle_sample_acquisition() {
+    use crafter::radio::{IqEvent, IqSource, RadioResult, RxConfig, StreamEnd};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    struct Source(Arc<AtomicBool>);
+    impl IqSource for Source {
+        fn next_event(&mut self) -> RadioResult<IqEvent> {
+            Ok(IqEvent::End(StreamEnd::Eof))
+        }
+        fn cancel(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let bounds = RxConfig {
+        sample_rate_hz: 20_000_000,
+        center_frequency_hz: 2_437_000_000,
+        max_chunk_samples: 100,
+        max_buffer_samples: 200,
+        max_frame_bytes: 4095,
+        max_pending_frames: 4,
+        max_capture_samples: 1000,
+        max_duration: std::time::Duration::from_secs(1),
+    };
+    let backend = WifiBackend::RadioAdapters {
+        source: Some(Box::new(Source(cancelled.clone()))),
+        sink: None,
+        bounds,
+    };
+    let wire = PacketWire::wifi(
+        backend,
+        WifiInterfaceConfig {
+            directions: WifiDirections::Receive,
+            ..WifiInterfaceConfig::default()
+        },
+    )
+    .unwrap();
+    let control = wire.wifi_control().unwrap();
+    let mut source = wire.source().unwrap();
+    control.cancel();
+    assert!(cancelled.load(Ordering::SeqCst));
+    assert!(source.next_record().unwrap().is_none());
+}
+
 fn capture(bytes: Vec<u8>, link: LinkType, missing: usize) -> PcapRecord {
     PcapRecord::new(timestamp(), (bytes.len() + missing) as u32, bytes, link).unwrap()
 }

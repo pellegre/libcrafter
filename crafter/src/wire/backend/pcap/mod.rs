@@ -105,6 +105,14 @@ impl OfflinePcapSource {
         &self.path
     }
 
+    /// Capture framing recorded in the file header, before normalization.
+    pub fn pcap_link_type(&self) -> PcapLinkType {
+        match &self.inner {
+            OfflinePcapSourceInner::Reader(reader) => reader.pcap_link_type(),
+            OfflinePcapSourceInner::Filtered(capture) => capture.link_type(),
+        }
+    }
+
     /// Normalize Wi-Fi framing before payload decoding on subsequent reads.
     pub fn normalized_wifi(mut self) -> Self {
         self.normalize_wifi = true;
@@ -296,6 +304,11 @@ pub struct PcapInterfaceSource {
 }
 
 impl PcapInterfaceSource {
+    /// Capture framing reported by the opened driver.
+    pub const fn pcap_link_type(&self) -> PcapLinkType {
+        self.inner.link_type()
+    }
+
     /// Normalize Wi-Fi framing before payload decoding on subsequent reads.
     pub fn normalized_wifi(mut self) -> Self {
         self.normalize_wifi = true;

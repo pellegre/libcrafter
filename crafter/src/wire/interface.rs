@@ -44,6 +44,20 @@ impl InterfaceMode {
     }
 }
 
+/// Application-facing format and opened I/O capabilities, independent of backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PacketInterfaceDescriptor {
+    /// Selected operating mode; absent when the backend does not identify it.
+    /// Managed Wi-Fi is caller-declared, not proof of association.
+    pub mode: Option<InterfaceMode>,
+    /// Record representation. Unknown remains absent, rather than assumed Ethernet.
+    pub packet_format: Option<PacketFormat>,
+    pub receive: bool,
+    pub transmit: bool,
+    /// Whether directions share one RF chain, when known by the backend.
+    pub half_duplex: Option<bool>,
+}
+
 /// Capture trailer evidence; absence of evidence never implies a valid FCS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureFcs {

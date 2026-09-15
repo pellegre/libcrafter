@@ -7,6 +7,15 @@ directions: [backend_to_libcrafter, libcrafter_to_backend]
 strict_bytes: true
 malformed: false
 behaviors:
+  - name: opened-wifi-interface
+    checks:
+      - monitor_and_iq_share_packet_source_and_writer_pipeline
+      - requested_radio_settings_are_distinct_from_observed_settings
+      - unsupported_width_and_phy_settings_return_explicit_errors
+      - cancellation_and_terminal_errors_remain_inspectable_after_split
+      - receive_restarts_have_distinct_epochs_and_explicit_gaps
+      - direction_switches_preserve_queued_samples_and_total_capture_bounds
+      - native_callback_storage_outlives_stop_failure_cleanup
   - name: normalized-wifi
     checks:
       - bare_and_radiotap_packets_agree

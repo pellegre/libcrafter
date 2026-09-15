@@ -29,12 +29,17 @@ pub mod transform;
 #[cfg(test)]
 mod transform_contract;
 pub mod transmitter;
+pub mod wifi_wire;
 pub mod wpa;
 pub mod writer;
+pub use wifi_wire::{
+    WifiBackend, WifiDirections, WifiInterfaceConfig, WifiInterfaceControl,
+    WifiInterfaceDescriptor, WifiInterfaceStatus, WifiPhy,
+};
 
 pub use interface::{
     normalize_wifi_record, normalized_wifi_pcap_record, CaptureFcs, InterfaceMode, MonitorWriter,
-    NormalizedWifiSource, PacketFormat, WifiCaptureMetadata,
+    NormalizedWifiSource, PacketFormat, PacketInterfaceDescriptor, WifiCaptureMetadata,
 };
 
 pub use backend::raw_socket::RawSocketWriter;

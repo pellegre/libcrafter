@@ -20,6 +20,10 @@ impl fmt::Debug for LibpcapOfflineCapture {
 }
 
 impl LibpcapOfflineCapture {
+    pub(crate) const fn link_type(&self) -> PcapLinkType {
+        self.link_type
+    }
+
     pub(crate) fn open(path: impl AsRef<Path>, filter: Option<&str>) -> Result<Self> {
         let mut capture = pcap_crate::Capture::from_file(path)?;
         if let Some(filter) = filter.filter(|filter| !filter.trim().is_empty()) {

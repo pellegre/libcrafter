@@ -15,8 +15,15 @@ pub use ht::{
 };
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf;
+#[cfg(feature = "radio-hackrf")]
+mod hackrf_duplex;
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf_tx;
+#[cfg(feature = "radio-hackrf")]
+pub use hackrf_duplex::{
+    HackRfDirection, HackRfDuplex, HackRfDuplexControl, HackRfDuplexSink, HackRfDuplexSource,
+    HackRfDuplexStatus,
+};
 mod ofdm_tx;
 #[cfg(feature = "radio-hackrf")]
 pub use hackrf::{HackRfConfig, HackRfSource, HackRfStats};
@@ -245,6 +252,12 @@ pub enum IqEvent {
 pub trait IqSource {
     fn next_event(&mut self) -> RadioResult<IqEvent>;
     fn cancel(&mut self);
+    /// Cancel and collect shutdown errors when the transport can report them.
+    /// Existing sources retain their infallible cancellation behavior by default.
+    fn cancel_with_result(&mut self) -> RadioResult<()> {
+        self.cancel();
+        Ok(())
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResetReason {
