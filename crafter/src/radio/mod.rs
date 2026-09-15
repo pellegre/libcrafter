@@ -18,13 +18,12 @@ mod hackrf_tx;
 mod ht;
 mod ldpc;
 mod ofdm_tx;
+mod packet;
 mod parallel;
 mod signal;
-mod source;
 mod stbc;
 mod sync;
 mod transport;
-mod tx;
 mod wifi;
 mod windowed;
 
@@ -53,19 +52,18 @@ pub use ht::{
     HtTransmission, HtTxConfig,
 };
 pub use ofdm_tx::{LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig, OfdmSignalFields};
+pub use packet::{PacketEncoder, RadioPacketSource, RadioPacketWriter, RadioReceiveMetadata};
 pub use parallel::{ParallelLegacyWifiDecoder, ParallelWifiDecoder};
 pub use signal::SignalInfo;
-pub use source::{RadioPacketSource, RadioReceiveMetadata};
 pub use transport::{
     ComplexSample, Discontinuity, EncodedSamples, GapReason, IqChunk, IqContinuity, IqEvent,
     IqPosition, IqSink, IqSinkOutcome, IqSource, MemoryIqSource, OwnedSamples, ReaderIqSource,
     RxConfig, SampleCompletion, SampleFormat, SampleLoss, StreamEnd, TimeAnchor,
 };
-pub use tx::{
-    EncodedWifiTransmission, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig,
-    PacketEncoder, RadioPacketWriter, WifiFcsPolicy, WifiPacketEncoder, WifiTxEncoder,
+pub use wifi::{
+    EncodedWifiTransmission, LegacyWifiDecoder, LegacyWifiPhy, LegacyWifiTransmission,
+    LegacyWifiTxConfig, WifiDecoder, WifiFcsPolicy, WifiPacketEncoder, WifiTxEncoder,
 };
-pub use wifi::{LegacyWifiDecoder, WifiDecoder};
 pub use windowed::{WindowedLegacyWifiDecoder, WindowedWifiDecoder};
 
 /// Compatibility facade for the deterministic in-memory sample sink.

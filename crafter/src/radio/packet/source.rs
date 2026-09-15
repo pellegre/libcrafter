@@ -1,7 +1,11 @@
 //! The only IQ-to-packet boundary: recovered MAC bytes enter the normal parser.
 use std::collections::VecDeque;
 
-use super::*;
+use super::super::{
+    codec::{FrameFraming, FrameIntegrity, PhyDecoder, PhyDiagnostic, RecoveredFrame, ResetReason},
+    error::{RadioError, RadioResult},
+    transport::{IqEvent, IqPosition, IqSource, RxConfig, StreamEnd},
+};
 use crate::wire::{
     BackendKind, CaptureFcs, PacketMetadata, PacketOrigin, PacketRecord, PacketSource,
     WifiCaptureMetadata, WireError,
@@ -182,6 +186,10 @@ fn frame_record(frame: RecoveredFrame) -> crate::wire::Result<PacketRecord> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::radio::{
+        DecodeOutput, Discontinuity, GapReason, IqChunk, LegacyOfdmDecoder, ReaderIqSource,
+        SampleLoss, TimeAnchor, WifiDecoder,
+    };
     use crate::wire::{Dot11Metadata, Sniffer};
     use crate::Dot11;
     use std::{
@@ -216,7 +224,7 @@ mod tests {
     }
     #[test]
     fn radio_ht_ampdu_packet_source_keeps_duplicate_mpdus() {
-        for row in include_str!("../../tests/fixtures/iq/ht-ampdu-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/ht-ampdu-index.tsv")
             .lines()
             .skip(1)
             .filter(|row| {
@@ -268,7 +276,7 @@ mod tests {
     }
     #[test]
     fn radio_ht_ldpc_packet_source_preserves_bytes_and_metadata() {
-        let bytes = include_bytes!("../../tests/fixtures/iq/ht-ldpc-7-gi800-len100-clean.cs8");
+        let bytes = include_bytes!("../../../tests/fixtures/iq/ht-ldpc-7-gi800-len100-clean.cs8");
         let source =
             ReaderIqSource::new(Cursor::new(bytes.to_vec()), config(), position()).unwrap();
         let source = RadioPacketSource::new(source, WifiDecoder::new(), config()).unwrap();
@@ -280,7 +288,7 @@ mod tests {
         let record = &records[0];
         assert!(record.packet().layer::<Dot11>().is_some());
         assert!(record.metadata().wifi().is_some());
-        let row = include_str!("../../tests/fixtures/iq/ht-ldpc-index.tsv")
+        let row = include_str!("../../../tests/fixtures/iq/ht-ldpc-index.tsv")
             .lines()
             .find(|r| r.starts_with("ht-ldpc-7-gi800-len100-clean\t"))
             .unwrap();
@@ -309,7 +317,7 @@ mod tests {
     }
     #[test]
     fn radio_sniffer_original_bytes_and_both_metadata_survive() {
-        let bytes = include_bytes!("../../tests/fixtures/iq/ofdm-6-clean.cs8");
+        let bytes = include_bytes!("../../../tests/fixtures/iq/ofdm-6-clean.cs8");
         let mut samples = bytes.to_vec();
         samples.extend_from_slice(bytes);
         // Both frames are delivered from a single source chunk.
@@ -351,7 +359,7 @@ mod tests {
     }
     #[test]
     fn radio_packet_source_gap_and_eof_discard_partial_frames() {
-        let bytes = include_bytes!("../../tests/fixtures/iq/ofdm-6-clean.cs8");
+        let bytes = include_bytes!("../../../tests/fixtures/iq/ofdm-6-clean.cs8");
         let chunk = |part: &[u8], p| {
             IqEvent::Chunk(
                 IqChunk::new(config(), p, part.iter().map(|b| *b as i8).collect()).unwrap(),

@@ -1,4 +1,5 @@
 //! Bounded parallel Wi-Fi PHY dispatch; sources and packet parsing stay unchanged.
+use super::wifi::same_occurrence;
 use super::*;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
@@ -45,7 +46,7 @@ impl Collector {
             }
             if let Some((old_slice, old)) = self.frames.iter_mut().find(|(_, old)| {
                 (self.split && family != 0 && same_split_frame(old, &frame))
-                    || super::wifi::same_occurrence(old, &frame)
+                    || same_occurrence(old, &frame)
             }) {
                 if (
                     slice,
