@@ -1,5 +1,6 @@
 //! Private clause 15/18 acquisition. Coordinates refer to the original 20 Msps stream.
 use super::*;
+use crate::LinkType;
 use std::f32::consts::PI;
 use wide::f32x4;
 const BARKER: [f32; 11] = [1., -1., 1., 1., -1., 1., 1., 1., -1., -1., -1.];
@@ -825,6 +826,7 @@ impl Acquisition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     fn config() -> RxConfig {
         RxConfig {
             sample_rate_hz: 20_000_000,

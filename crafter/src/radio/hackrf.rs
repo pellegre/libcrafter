@@ -4,7 +4,7 @@ use std::{
     collections::VecDeque,
     sync::{Arc, Condvar, Mutex, MutexGuard},
     thread::{self, JoinHandle},
-    time::Instant,
+    time::{Duration, Instant},
 };
 #[cfg(feature = "radio-hackrf")]
 #[allow(unsafe_code)]

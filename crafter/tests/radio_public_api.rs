@@ -22,6 +22,7 @@ fn assert_type<T>() {}
 fn assert_iq_source<T: IqSource>() {}
 fn assert_phy_decoder<T: PhyDecoder>() {}
 fn assert_iq_sink<T: IqSink<OwnedSamples>>() {}
+fn assert_default_iq_sink<T: IqSink>() {}
 fn assert_packet_encoder<T: PacketEncoder>() {}
 fn assert_wifi_encoder<T: WifiTxEncoder>() {}
 fn assert_encoded_samples<T: EncodedSamples>() {}
@@ -124,6 +125,7 @@ fn radio_facade_exports_the_existing_public_surface() {
     assert_phy_decoder::<LegacyOfdmDecoder>();
     assert_phy_decoder::<WifiDecoder>();
     assert_iq_sink::<MemoryIqSink<OwnedSamples>>();
+    assert_default_iq_sink::<MemoryIqSink<LegacyWifiTransmission>>();
     assert_packet_encoder::<LegacyWifiTxConfig>();
     assert_packet_encoder::<HtTxConfig>();
     assert_packet_encoder::<WifiPacketEncoder>();
@@ -182,12 +184,14 @@ macro_rules! assert_transmit_surface {
         fn encoded<T: api::EncodedSamples>() {}
         fn wifi_transmission<T: api::EncodedWifiTransmission>() {}
         fn sink<T: api::IqSink<api::OwnedSamples>>() {}
+        fn default_sink<T: api::IqSink>() {}
         fn packet_encoder<T: api::PacketEncoder>() {}
         fn wifi_encoder<T: api::WifiTxEncoder>() {}
 
         encoded::<api::OwnedSamples>();
         wifi_transmission::<api::LegacyWifiTransmission>();
         sink::<api::MemoryIqSink<api::OwnedSamples>>();
+        default_sink::<api::MemoryIqSink<api::LegacyWifiTransmission>>();
         packet_encoder::<api::LegacyWifiTxConfig>();
         packet_encoder::<api::WifiPacketEncoder>();
         wifi_encoder::<api::LegacyWifiTxConfig>();
