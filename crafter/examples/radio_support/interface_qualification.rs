@@ -280,6 +280,9 @@ pub(super) fn check_acquisition(acquisition: &Value) -> Result<()> {
 }
 
 pub(super) fn check_targets(report: &Value, targets: &Value) -> Result<()> {
+    if report["policy"]["frame_control"] != targets["frame_control"] {
+        return Err("RX frame selection differs from frozen target scope".into());
+    }
     let thresholds = array(targets, "thresholds")?;
     if targets["schema"] != "crafter.interface.rx-targets/v1" || thresholds.is_empty() {
         return Err("missing fixed RX targets".into());

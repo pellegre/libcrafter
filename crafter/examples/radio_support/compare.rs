@@ -20,6 +20,19 @@ pub struct EpochAnchor {
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct FrameControlFilter {
+    pub mask: u16,
+    pub value: u16,
+}
+impl FrameControlFilter {
+    fn matches(&self, bytes: &[u8]) -> bool {
+        bytes
+            .get(..2)
+            .is_some_and(|b| u16::from_le_bytes([b[0], b[1]]) & self.mask == self.value)
+    }
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Policy {
     pub schema: String,
     pub overlap_ns: [u64; 2],
@@ -30,6 +43,8 @@ pub struct Policy {
     pub match_window_ns: u64,
     pub anchors: Vec<EpochAnchor>,
     pub max_observations: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_control: Option<FrameControlFilter>,
 }
 impl Policy {
     pub fn validate(&self) -> Result<()> {
@@ -40,6 +55,13 @@ impl Policy {
             || self.max_observations > 10_000
         {
             return Err("invalid comparison policy/bounds".into());
+        }
+        if self
+            .frame_control
+            .as_ref()
+            .is_some_and(|filter| filter.mask == 0 || filter.value & !filter.mask != 0)
+        {
+            return Err("invalid frame-control selection".into());
         }
         for i in [self.hackrf_capture_ns, self.reference_capture_ns] {
             if i[0] >= i[1] || i[0] > self.overlap_ns[0] || i[1] < self.overlap_ns[1] {
@@ -209,6 +231,13 @@ pub fn recovered_frame(
         Ok(x) => x,
         Err(e) => return Ok(Err(e)),
     };
+    if policy
+        .frame_control
+        .as_ref()
+        .is_some_and(|f| !f.matches(&bytes))
+    {
+        return Ok(Err("outside_frame_selection"));
+    }
     Ok(Ok(Observation {
         id: v["ordinal"].as_u64().ok_or("missing ordinal")?,
         bytes,
@@ -356,6 +385,13 @@ pub fn reference_frame(
     )?;
     if bytes.len() < 10 || bytes.len() > 4091 {
         return Err("truncated_or_oversize");
+    }
+    if policy
+        .frame_control
+        .as_ref()
+        .is_some_and(|f| !f.matches(&bytes))
+    {
+        return Err("outside_frame_selection");
     }
     Ok(Observation {
         id,
@@ -791,7 +827,58 @@ mod tests {
             match_window_ns: 10,
             anchors: vec![],
             max_observations: 100,
+            frame_control: None,
         }
+    }
+    #[test]
+    fn radio_comparison_selection_is_symmetric_and_preserves_integrity_checks() {
+        let mut p = policy();
+        p.frame_control = Some(FrameControlFilter {
+            mask: 0x00fc,
+            value: 0x0080,
+        });
+        p.validate().unwrap();
+        for fc in [0x0080u16, 0x0880, 0x0008, 0x00b4, 0x00d4] {
+            let mut bytes = vec![0; 36];
+            bytes[..2].copy_from_slice(&fc.to_le_bytes());
+            let original = fcs(bytes);
+            let mut recovered = json!({"ordinal":1,"config":{"sample_rate_hz":20000000,"center_frequency_hz":2412000000u64,"max_chunk_samples":100,"max_buffer_samples":1000,"max_frame_bytes":4095,"max_pending_frames":4,"max_capture_samples":10000,"max_duration_ns":1000000000},"position":{"epoch":0,"sequence":0,"sample_index":0,"anchor":{"sample_index":0,"unix_ns":1000,"uncertainty_ns":2},"gap_reason":null,"lost_samples":null},"end_sample_index":100,"phy":"legacy_ofdm","rate_bps":6000000,"fcs":"present_valid","original_mac_hex":hex(&original)});
+            let reference = radiotap(&original, 0x10, 12);
+            let a = recovered_frame(&recovered, &p).unwrap();
+            let b = reference_frame(&reference, reference.len() as u32, [998, 1002], 1, &p);
+            assert_eq!(a.is_ok(), fc & 0xfc == 0x80);
+            assert_eq!(b.is_ok(), a.is_ok());
+            assert!(recovered_frame(&recovered, &policy()).unwrap().is_ok());
+            assert!(reference_frame(
+                &reference,
+                reference.len() as u32,
+                [998, 1002],
+                1,
+                &policy()
+            )
+            .is_ok());
+            let mut corrupt = original.clone();
+            *corrupt.last_mut().unwrap() ^= 1;
+            recovered["original_mac_hex"] = json!(hex(&corrupt));
+            assert_eq!(
+                recovered_frame(&recovered, &p).unwrap().unwrap_err(),
+                "corrupt_fcs"
+            );
+            let reference = radiotap(&corrupt, 0x10, 12);
+            assert_eq!(
+                reference_frame(&reference, reference.len() as u32, [998, 1002], 1, &p)
+                    .unwrap_err(),
+                "corrupt_fcs"
+            );
+        }
+        for (mask, value) in [(0, 0), (0xfc, 0x100)] {
+            p.frame_control = Some(FrameControlFilter { mask, value });
+            assert!(p.validate().is_err());
+        }
+        assert!(serde_json::to_value(policy())
+            .unwrap()
+            .get("frame_control")
+            .is_none());
     }
     fn mac() -> Vec<u8> {
         vec![0xd4, 0, 0, 0, 2, 0, 0, 0, 0, 1]
