@@ -5,9 +5,10 @@ use super::{
     HtCoding, HtFormat, HtGuardInterval, HtMcs, HtTxConfig,
 };
 use crate::radio::ht::HtSignalFields;
+use crate::radio::wifi::ofdm::waveform::Complex;
 use crate::radio::{
     ldpc,
-    ofdm_tx::{self as ofdm, Complex},
+    wifi::ofdm::{waveform as ofdm, OfdmSignalFields},
     RadioError, RadioResult,
 };
 
@@ -29,7 +30,7 @@ pub struct HtTransmission {
     pub coding: HtCoding,
     pub guard_interval: HtGuardInterval,
     pub ht_signal: HtSignalBits,
-    pub legacy_signal: Option<ofdm::OfdmSignalFields>,
+    pub legacy_signal: Option<OfdmSignalFields>,
     pub data_symbols: usize,
     pub scrambler_seed: u8,
     pub sample_rate_hz: u32,
@@ -240,7 +241,7 @@ impl HtTransmission {
                 derived: derived_ht_signal,
                 explicit: config.ht_signal_override.is_some(),
             },
-            legacy_signal: (config.format == HtFormat::Mixed).then_some(ofdm::OfdmSignalFields {
+            legacy_signal: (config.format == HtFormat::Mixed).then_some(OfdmSignalFields {
                 transmitted: transmitted_legacy_signal,
                 derived: derived_legacy_signal,
                 explicit: config.legacy_signal_override.is_some(),

@@ -1,5 +1,5 @@
 use super::*;
-use crate::radio::{ofdm_tx as ofdm, RadioError};
+use crate::radio::{wifi::ofdm::waveform as ofdm, RadioError};
 
 fn bytes(hex: &str) -> Vec<u8> {
     hex.as_bytes()

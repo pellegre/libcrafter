@@ -5,7 +5,6 @@
 //! IQ is never a packet layer; recovered frames cross the typed packet boundary.
 mod ampdu;
 mod codec;
-mod data;
 mod error;
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf;
@@ -15,12 +14,9 @@ mod hackrf_duplex;
 mod hackrf_tx;
 mod ht;
 mod ldpc;
-mod ofdm_tx;
 mod packet;
 mod parallel;
-mod signal;
 mod stbc;
-mod sync;
 mod transport;
 mod wifi;
 mod windowed;
@@ -29,7 +25,6 @@ pub use codec::{
     DecodeOutput, FrameFraming, FrameIntegrity, PhyDecoder, PhyDiagnostic, RecoveredFrame,
     ResetReason,
 };
-pub use data::{DecoderStats, LegacyOfdmDecoder};
 pub use error::{RadioError, RadioResult};
 #[cfg(feature = "radio-hackrf")]
 pub use hackrf::{HackRfConfig, HackRfSource, HackRfStats};
@@ -44,20 +39,19 @@ pub use ht::{
     HtCoding, HtFormat, HtGuardInterval, HtMcs, HtSignalBits, HtSignalError, HtSignalFields,
     HtTransmission, HtTxConfig,
 };
-pub use ofdm_tx::{LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig, OfdmSignalFields};
 pub use packet::{PacketEncoder, RadioPacketSource, RadioPacketWriter, RadioReceiveMetadata};
 pub use parallel::{ParallelLegacyWifiDecoder, ParallelWifiDecoder};
-pub use signal::SignalInfo;
 pub use transport::{
     ComplexSample, Discontinuity, EncodedSamples, GapReason, IqChunk, IqContinuity, IqEvent,
     IqPosition, IqSink, IqSinkOutcome, IqSource, MemoryIqSource, OwnedSamples, ReaderIqSource,
     RxConfig, SampleCompletion, SampleFormat, SampleLoss, StreamEnd, TimeAnchor,
 };
 pub use wifi::{
-    DsssCckDecoder, DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, LegacyDsssCckRate,
-    LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyWifiDecoder, LegacyWifiPhy,
-    LegacyWifiTransmission, LegacyWifiTxConfig, WifiDecoder, WifiFcsPolicy, WifiPacketEncoder,
-    WifiTxEncoder,
+    DecoderStats, DsssCckDecoder, DsssPlcpFields, DsssPreamble, EncodedWifiTransmission,
+    LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmDecoder,
+    LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig, LegacyWifiDecoder, LegacyWifiPhy,
+    LegacyWifiTransmission, LegacyWifiTxConfig, OfdmSignalFields, SignalInfo, WifiDecoder,
+    WifiFcsPolicy, WifiPacketEncoder, WifiTxEncoder,
 };
 pub use windowed::{WindowedLegacyWifiDecoder, WindowedWifiDecoder};
 

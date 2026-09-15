@@ -1,7 +1,7 @@
 //! HT20 frequency mapping, training, and OFDM waveform primitives.
 
 use super::HtMcs;
-use crate::radio::ofdm_tx::{self as ofdm, Complex};
+use crate::radio::wifi::ofdm::waveform::{self as ofdm, Complex};
 use std::f64::consts::PI;
 
 const DATA_CARRIERS: [i32; 52] = [
