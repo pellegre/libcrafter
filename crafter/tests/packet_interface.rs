@@ -4,6 +4,41 @@
 #[path = "packet_interface/fixtures.rs"]
 mod interface_fixtures;
 
+#[cfg(feature = "radio")]
+#[allow(dead_code)]
+#[path = "../examples/wifi_interface.rs"]
+mod wifi_interface_example;
+
+#[cfg(feature = "radio")]
+#[test]
+fn readme_wifi_pipeline_matches_compiled_example_and_runs_both_backends() {
+    let example = include_str!("../examples/wifi_interface.rs");
+    let snippet = example
+        .split_once("// README shared-pipeline start\n")
+        .unwrap()
+        .1
+        .split_once("// README shared-pipeline end")
+        .unwrap()
+        .0;
+    let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let readme = std::fs::read_to_string(crate_root.join("README.md"))
+        .or_else(|_| std::fs::read_to_string(crate_root.join("../README.md")))
+        .expect("packaged or workspace README");
+    assert!(readme.contains(&format!(
+        "```rust\nuse crafter::prelude::*;\n\n{snippet}```"
+    )));
+    for mode in ["monitor", "radio"] {
+        let backend = wifi_interface_example::offline_backend(mode).unwrap();
+        let status = wifi_interface_example::relay(backend).unwrap();
+        assert_eq!(status.received_records, 1, "{mode}");
+        assert_eq!(status.submitted_records, 1, "{mode}");
+        assert!(status.receive_ended, "{mode}");
+        assert!(!status.cancelled, "{mode}");
+        assert_eq!(status.receive_error, None, "{mode}");
+        assert_eq!(status.transmit_error, None, "{mode}");
+    }
+}
+
 use crafter::prelude::*;
 use crafter::wire::backend::pcap::{PcapRecord, PcapTimestamp, TimestampPrecision};
 use crafter::wire::{

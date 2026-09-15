@@ -1,12 +1,27 @@
 # Wi-Fi 4 IQ implementation and evidence
 
 The HT20 radio extension recovers raw IEEE 802.11 frame bytes from IQ and
-constructs single-stream transmit IQ from packets. The existing packet, radio
-source, replay, and bounded transmitter interfaces remain the integration
-boundary. Payload processing is separate from physical-layer byte recovery.
+constructs single-stream transmit IQ from packets. Applications use
+`PacketWire::wifi(backend, config)` to substitute a monitor interface for the
+radio pipeline without changing typed receive, transform, or transmit code.
+`WifiDecoder` implements the same `PhyDecoder` contract as legacy decoding;
+`WifiPacketEncoder::Ht20` and `Legacy` implement `PacketEncoder` over the same
+protocol-independent sample source/sink boundary. Lower-level radio source,
+replay, and bounded transmitter APIs remain available. Payload processing,
+including the existing shared WPA transform, is separate from physical-layer
+byte recovery. See the [wire interface reference](reference/wire.md#interchangeable-packet-interfaces).
 
 Legacy and HT20 usage and measured coverage are documented in
 [radio.md](radio.md). VHT, HE, and EHT are outside this Wi-Fi 4 implementation.
+
+The full receive matrix below is implemented and independently tested with
+synthetic waveforms. Current shared-interface live evidence is narrower: all
+48 HT20 transmit cases in three complete bounded runs, plus controlled HT20
+mixed BCC MCS0/800 ns reception from a monitor transmitter and a saved-IQ
+occurrence regression. It does not establish every HT receive mode or sustained
+real-time capture. The [shared-interface qualification](radio.md#shared-interface-qualification)
+records exact scope, losses, and excluded workloads separately from historical
+qualification and offline coverage.
 
 ## Scope
 
@@ -259,20 +274,23 @@ remains recorded as such.
 
 ## Existing example and replay workflow
 
-The receive example's leading `--modern` flag selects `WifiDecoder`, including
-legacy reception and the HT modes described above. Without it, existing legacy
-behavior is unchanged. It uses the same source, IQ recording, packet parsing,
-terminal evidence and JSONL artifact path:
+The receive example's leading `--interface` flag selects the shared PacketWire
+path, which always uses `WifiDecoder` for legacy and supported HT20 reception.
+It accepts `--modern` for command compatibility. The same IQ recording,
+packet parsing, terminal evidence and JSONL artifact format remain available:
 
 ```sh
-cargo run -p crafter --features radio --example radio_receive -- --modern --replay crafter/tests/fixtures/iq/ht-ampdu-7-gi800-ldpc-duplicate.cs8
-cargo run -p crafter --features radio --example radio_receive -- --modern --replay-artifact saved-iq.iq
+cargo run -p crafter --features radio --example radio_receive -- --interface --modern --replay crafter/tests/fixtures/iq/ht-ampdu-7-gi800-ldpc-duplicate.cs8
+cargo run -p crafter --features radio --example radio_receive -- --interface --modern --replay-artifact saved-iq.iq
 ```
 
-Modern recording writes `decoder: "wifi"` in the existing v2 IQ header. Replay
-without an override preserves that selection. `--modern` can explicitly decode
-an older recording through the new receiver; original IQ and recorded bounds
-are preserved. Modern replay cannot use legacy parallel/windowed dispatch.
+Without `--interface`, the existing direct radio-source workflow remains:
+leading `--modern` selects `WifiDecoder`, raw replay defaults to the legacy
+decoder, and saved-artifact replay preserves its recorded decoder unless
+explicitly overridden. Modern recording writes `decoder: "wifi"` in the v2 IQ
+header. The shared interface also decodes older saved recordings with the
+combined decoder while retaining original IQ and recorded bounds. Modern
+replay cannot use legacy parallel/windowed dispatch.
 New raw/live modern configurations reserve 1024 output slots; older recordings
 retain their original output limit and may fail explicitly if an aggregate
 exceeds it. No samples are discarded to make an overflowing replay pass.

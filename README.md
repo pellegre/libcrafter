@@ -11,8 +11,8 @@ packets, place them on real networks, decode what comes back, and act on what
 they observe.
 
 This README is a progressive walkthrough: build your first packet, inspect and
-decode bytes, read and write pcap, and plan a send. Every snippet uses
-documentation address space (`192.0.2.0/24`, `198.51.100.0/24`,
+decode bytes, read and write pcap, switch packet/radio interfaces, and plan a
+send. Every snippet uses documentation address space (`192.0.2.0/24`, `198.51.100.0/24`,
 `2001:db8::/32`) and offline or dry-run defaults; live traffic is always an
 explicit opt-in.
 
@@ -135,6 +135,82 @@ classic pcap read/write, libpcap BPF filters, offline sniffing, and bounded live
 capture hooks. Full pcapng and a full BPF parser are not currently in scope. See
 [docs/reference/wire.md](docs/reference/wire.md) for sources, writers,
 transmitters, and transform chains.
+
+## Packet interfaces and radio receive/transmit
+
+Radio is a core packet-I/O capability: receive wave samples, decode them into
+typed `Packet` records, or encode those same packets for transmission.
+`PacketWire` also handles kernel network interfaces. A Wi-Fi monitor adapter
+and the HackRF radio pipeline present the same bare Wi-Fi frames, so selecting
+the backend changes one construction point, not the packet-processing code.
+
+| Interface | What the application reads and writes | Who handles the radio |
+| --- | --- | --- |
+| Ethernet or managed Wi-Fi | Ethernet packets | Kernel/driver; managed Wi-Fi association and encryption stay there |
+| Wi-Fi monitor mode | Bare Wi-Fi (`Dot11`) packets | Kernel/driver; the backend handles capture/injection wrappers |
+| Wi-Fi over HackRF or saved samples | Bare Wi-Fi (`Dot11`) packets | A sample device plus libcrafter's Wi-Fi codec |
+
+The runnable [wifi_interface example](crafter/examples/wifi_interface.rs)
+constructs a backend with `let backend = offline_backend(&mode)?;`. Choose
+`monitor` or `radio`; both are synthetic, in-memory demonstrations with no
+device access. This exact shared function then receives, annotates, inspects,
+and writes the typed records:
+
+```rust
+use crafter::prelude::*;
+
+pub fn relay(backend: WifiBackend) -> crafter::wire::Result<WifiInterfaceStatus> {
+    let wire = PacketWire::wifi(backend, WifiInterfaceConfig::default())?;
+    let control = wire.wifi_control().expect("Wi-Fi control");
+    let (source, writer) = wire.split()?;
+    let mut sniffer = Sniffer::new(source).with(Dot11Metadata::new());
+    let mut transmitter = Transmitter::new(writer);
+    while let Some(record) = sniffer.next_record()? {
+        println!("{}", record.packet().summary());
+        for report in transmitter.send_record(record)? {
+            println!("{:?}", report);
+        }
+    }
+    Ok(control.status())
+}
+```
+
+```sh
+cargo run -p crafter --features radio --example wifi_interface -- monitor
+cargo run -p crafter --features radio --example wifi_interface -- radio
+```
+
+Live operation is explicit: `WifiBackend::Monitor` opens an externally prepared
+monitor interface; `WifiBackend::HackRf { rx, tx }` uses explicit native device
+settings and finite capture/transmit bounds. The common configuration selects
+channel, 20 MHz width, directions, and transmit format. It does not tune a
+monitor interface or establish a managed connection. Unsupported settings fail
+explicitly. HackRF is half-duplex: sending interrupts receiving, and the next
+receive period has a new continuity epoch. Successful local submission is not
+proof that another device received a packet.
+
+The optional `radio` feature provides offline sample replay/generation, legacy
+Wi-Fi, and Wi-Fi 4 on 20 MHz channels (HT20); `radio-hackrf` adds native device
+I/O and requires libhackrf. The sample source/sink is separate from the protocol
+decoder/encoder, so another codec need not modify the device layer. This is an
+extension contract, not an implemented Bluetooth or Wi-Fi 5–7 decoder.
+
+Both Wi-Fi backends preserve original capture bytes and available timing,
+integrity, and radio metadata. The same existing `WpaDecrypt` transform works
+above either backend when supplied the required keys and handshake evidence;
+its current scope is WPA2-Personal with CCMP-128 encryption, not a new Wi-Fi
+connection or encryption stack.
+
+Independent waveform fixtures cover the supported legacy and HT20 algorithms.
+Live checks through the shared interface additionally verified three complete
+15-case legacy and 48-case HT20 transmit matrices, controlled legacy and HT20
+reception of monitor transmissions, three scoped receive comparisons, and
+saved-sample replay. That evidence does **not** establish every HT20 receive
+mode, lossless continuous capture, or sustained real-time processing. Wider
+channels and Wi-Fi 5–7 are outside this implementation. See the
+[interface reference](docs/reference/wire.md#interchangeable-packet-interfaces)
+and [measured radio scope](docs/radio.md#shared-interface-qualification) for
+configuration, report meanings, exact coverage, and remaining limits.
 
 ## Send and receive
 
@@ -266,7 +342,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | Layer | Coverage | Guide |
 | --- | --- | --- |
 | Ethernet / VLAN | Ethernet II and 802.1Q VLAN, Linux cooked capture, null/loopback | — |
-| IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields; optional offline legacy OFDM/DSSS/CCK packet-to-IQ generation and explicit bounded HackRF transmission | [dot11](docs/guide/dot11.md), [radio](docs/radio.md) |
+| IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields; interchangeable monitor/radio packet interfaces; optional legacy and Wi-Fi 4 HT20 sample decoding/encoding and bounded HackRF receive/transmit | [dot11](docs/guide/dot11.md), [radio](docs/radio.md) |
 | ARP | Request/reply construction and decode | [arp](docs/guide/arp.md) |
 | IPv4 | DSCP/ECN, protocol labels, checksum status, typed options, fragment fields (no automatic reassembly) | [ipv4](docs/guide/ipv4.md) |
 | IGMP | IPv4 packet-layer membership queries/reports, IGMPv1/v2 compatibility, IGMPv3 query/report records, generic extensions, and multicast router discovery packet shapes; not a router, snooper, proxy, or scanner | [igmp](docs/guide/igmp.md) |
@@ -307,6 +383,7 @@ cargo run -p crafter --example pcap_read            # pcap + Sniffer
 cargo run -p crafter --example send_recv_icmp       # dry-run send/receive
 cargo run -p crafter --example dns_query -- --name example.com
 cargo run -p crafter --features radio --example radio_transmit -- --matrix
+cargo run -p crafter --features radio --example wifi_interface -- radio
 ```
 
 By category:
@@ -318,6 +395,8 @@ By category:
 - Pcap and sniffing — `pcap_write`, `pcap_read`, `wire_pcap_sniffer`,
   `wire_transform_chain`, `ip_defrag_offline`, `ip_fragment_offline`,
   `wpa_decrypt_offline`.
+- Packet interfaces and radio — `wifi_interface`, `radio_receive`,
+  `radio_transmit`, `radio_compare` (the `radio` feature enables offline use).
 - Protocols — `arp_who_has`, `dns_query`, `dhcpv4_discover`,
   `dhcpv4_option82`, `dhcpv4_leasequery`, `dhcpv6_solicit`,
   `dhcpv6_information_request`, `dhcpv6_prefix_delegation`, `dhcpv6_relay`,

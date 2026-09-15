@@ -5,12 +5,19 @@ use crafter::radio::{IqPosition, MemoryIqSource, OwnedSamples, RxConfig};
 use std::time::Duration;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let mode = std::env::args().nth(1).unwrap_or_else(|| "monitor".into());
+    let backend = offline_backend(&mode)?;
+    println!("{:?}", relay(backend)?);
+    Ok(())
+}
+
+pub fn offline_backend(mode: &str) -> std::result::Result<WifiBackend, Box<dyn std::error::Error>> {
     let packet = Dot11::data()
         .addr1(MacAddr::new([0x02, 0, 0x5e, 0, 0x53, 1]))
         .addr2(MacAddr::new([0x02, 0, 0x5e, 0, 0x53, 2]))
         .addr3(MacAddr::new([0x02, 0, 0x5e, 0, 0x53, 3]))
         / Raw::from("offline Wi-Fi interface");
-    let backend = match std::env::args().nth(1).as_deref().unwrap_or("monitor") {
+    let backend = match mode {
         "monitor" => WifiBackend::MonitorAdapters {
             source: Some(Box::new(VecPacketSource::from_packets([
                 Radiotap::new() / packet
@@ -54,18 +61,22 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
         _ => return Err("expected monitor or radio".into()),
     };
-    relay(backend)
+    Ok(backend)
 }
 
-fn relay(backend: WifiBackend) -> std::result::Result<(), Box<dyn std::error::Error>> {
+// README shared-pipeline start
+pub fn relay(backend: WifiBackend) -> crafter::wire::Result<WifiInterfaceStatus> {
     let wire = PacketWire::wifi(backend, WifiInterfaceConfig::default())?;
     let control = wire.wifi_control().expect("Wi-Fi control");
-    let (mut source, writer) = wire.split()?;
+    let (source, writer) = wire.split()?;
+    let mut sniffer = Sniffer::new(source).with(Dot11Metadata::new());
     let mut transmitter = Transmitter::new(writer);
-    while let Some(record) = source.next_record()? {
+    while let Some(record) = sniffer.next_record()? {
         println!("{}", record.packet().summary());
-        transmitter.send(record.packet().clone())?;
+        for report in transmitter.send_record(record)? {
+            println!("{:?}", report);
+        }
     }
-    println!("{:?}", control.status());
-    Ok(())
+    Ok(control.status())
 }
+// README shared-pipeline end
