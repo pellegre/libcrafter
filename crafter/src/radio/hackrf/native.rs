@@ -1,10 +1,15 @@
 //! Minimal RX/TX ABI reviewed against libhackrf hackrf.h at cc691022.
-use super::*;
+use super::{
+    rx::{Driver, HackRfConfig, Shared},
+    tx::{HackRfTxConfig, HackRfTxStats, TxShared},
+};
+use crate::radio::{RadioError, RadioResult};
 use std::{
     ffi::{c_char, c_int, c_void, CString},
     panic::{catch_unwind, AssertUnwindSafe},
     ptr,
-    sync::Condvar,
+    sync::{Arc, Condvar, Mutex},
+    time::Duration,
 };
 // Initialize/exit and native open/close accounting are serialized, but no
 // thread-affine MutexGuard is retained in a movable device owner.
@@ -321,10 +326,7 @@ unsafe extern "C" fn receive(transfer: *mut Transfer) -> c_int {
         }
         let shared = unsafe { &*t.rx_ctx.cast::<Arc<Shared>>() };
         if t.valid_length < 0 || t.buffer_length < t.valid_length || t.buffer.is_null() {
-            let mut s = shared.lock();
-            s.stop = true;
-            s.fault = Some(RadioError::Source("invalid HackRF transfer buffer".into()));
-            Shared::gap(&mut s, GapReason::SourceLoss);
+            shared.reject_invalid_transfer();
             return false;
         }
         let bytes =
@@ -337,33 +339,25 @@ unsafe extern "C" fn receive(transfer: *mut Transfer) -> c_int {
     }
 }
 
-pub(in crate::radio) struct NativeTx {
+pub(super) struct NativeTx {
     device: SharedDevice,
-    config: super::super::hackrf_tx::HackRfTxConfig,
+    config: HackRfTxConfig,
 }
 
 struct TxContext {
-    shared: Arc<super::super::hackrf_tx::TxShared>,
+    shared: Arc<TxShared>,
     flush_result: Mutex<Option<bool>>,
     flush_ready: Condvar,
 }
 impl NativeTx {
-    pub(in crate::radio) fn open(
-        config: &super::super::hackrf_tx::HackRfTxConfig,
-    ) -> RadioResult<Self> {
+    pub(super) fn open(config: &HackRfTxConfig) -> RadioResult<Self> {
         Ok(Self::shared(config.clone(), Device::open(&config.serial)?))
     }
-    pub(in crate::radio) fn shared(
-        config: super::super::hackrf_tx::HackRfTxConfig,
-        device: SharedDevice,
-    ) -> Self {
+    pub(super) fn shared(config: HackRfTxConfig, device: SharedDevice) -> Self {
         Self { device, config }
     }
 
-    pub(in crate::radio) fn transmit(
-        &mut self,
-        shared: Arc<super::super::hackrf_tx::TxShared>,
-    ) -> RadioResult<super::super::hackrf_tx::HackRfTxStats> {
+    pub(super) fn transmit(&mut self, shared: Arc<TxShared>) -> RadioResult<HackRfTxStats> {
         let mut native = self.device.lock().unwrap_or_else(|e| e.into_inner());
         if native.rx_context.is_some() || native.tx_context.is_some() {
             return Err(RadioError::Source(
@@ -531,7 +525,7 @@ mod tests {
     };
 
     struct MockHandle {
-        context: Weak<super::super::super::hackrf_tx::TxShared>,
+        context: Weak<TxShared>,
         context_alive_on_close: Arc<AtomicBool>,
         closes: Arc<AtomicUsize>,
         stop_result: c_int,
@@ -557,13 +551,8 @@ mod tests {
     fn mock_device(
         stop_result: c_int,
         disable_result: c_int,
-    ) -> (
-        Device,
-        Weak<super::super::super::hackrf_tx::TxShared>,
-        Arc<AtomicBool>,
-        Arc<AtomicUsize>,
-    ) {
-        let config = super::super::super::hackrf_tx::HackRfTxConfig {
+    ) -> (Device, Weak<TxShared>, Arc<AtomicBool>, Arc<AtomicUsize>) {
+        let config = HackRfTxConfig {
             serial: "synthetic".into(),
             center_frequency_hz: 2_437_000_000,
             sample_rate_hz: 20_000_000,
@@ -576,14 +565,8 @@ mod tests {
             repetitions: 1,
             inter_burst_gap_samples: 0,
         };
-        let shared = Arc::new(
-            super::super::super::hackrf_tx::TxShared::new(
-                &[1, 2],
-                &config,
-                Arc::new(AtomicBool::new(false)),
-            )
-            .unwrap(),
-        );
+        let shared =
+            Arc::new(TxShared::new(&[1, 2], &config, Arc::new(AtomicBool::new(false))).unwrap());
         let weak = Arc::downgrade(&shared);
         let alive = Arc::new(AtomicBool::new(false));
         let closes = Arc::new(AtomicUsize::new(0));
@@ -675,7 +658,7 @@ mod tests {
 
     #[test]
     fn radio_hackrf_native_tx_sets_valid_length_and_records_flush() {
-        let config = super::super::super::hackrf_tx::HackRfTxConfig {
+        let config = HackRfTxConfig {
             serial: "test".into(),
             center_frequency_hz: 2_437_000_000,
             sample_rate_hz: 20_000_000,
@@ -689,7 +672,7 @@ mod tests {
             inter_burst_gap_samples: 0,
         };
         let shared = Arc::new(
-            super::super::super::hackrf_tx::TxShared::new(
+            TxShared::new(
                 &[1, 2],
                 &config,
                 Arc::new(std::sync::atomic::AtomicBool::new(false)),

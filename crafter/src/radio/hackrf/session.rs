@@ -1,5 +1,15 @@
 //! One device owner with serialized RF directions and independently signalled cancellation.
-use super::*;
+use super::{
+    native::{Device, SharedDevice},
+    rx::{HackRfConfig, HackRfSource, HackRfStats},
+    tx::{HackRfTxConfig, HackRfTxSink, HackRfTxStats},
+};
+use crate::radio::{
+    Discontinuity, EncodedSamples, GapReason, IqEvent, IqSink, IqSinkOutcome, IqSource,
+    OwnedSamples, RadioError, RadioResult, SampleLoss, StreamEnd,
+};
+#[cfg(test)]
+use crate::radio::{IqChunk, IqPosition, RxConfig, SampleCompletion};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -96,7 +106,7 @@ trait DeviceIo: Send {
         cancelled: Arc<AtomicBool>,
     ) -> (RadioResult<IqSinkOutcome>, Option<HackRfTxStats>);
 }
-struct NativeDevice(super::hackrf::native::SharedDevice);
+struct NativeDevice(SharedDevice);
 impl DeviceIo for NativeDevice {
     fn receive(&mut self, config: HackRfConfig) -> RadioResult<Box<dyn Receive>> {
         Ok(Box::new(HackRfSource::open_shared(
@@ -345,7 +355,7 @@ impl HackRfDuplex {
                 reason: "duplex directions require the same physical device",
             });
         }
-        let device = super::hackrf::native::Device::open(&rx.serial)?;
+        let device = Device::open(&rx.serial)?;
         Ok(Self::with_device(rx, tx, Box::new(NativeDevice(device))))
     }
     fn with_device(
