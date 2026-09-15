@@ -5,7 +5,11 @@ The optional `radio` feature decodes legacy OFDM, DSSS/CCK, and 20 MHz Wi-Fi 4
 packets as owned CS8 waveforms at a 20 Msps source clock. It supports offline
 replay and generation without hardware; `radio-hackrf` adds explicit bounded
 native reception and transmission. Live qualification evidence is described
-below.
+below. For applications switching between a monitor interface and sample-based
+Wi-Fi, use `PacketWire::wifi(backend, config)` and the same typed packet
+receive/transform/transmit pipeline. See the
+[interface contract](reference/wire.md#interchangeable-packet-interfaces) and
+the offline [`wifi_interface`](../crafter/examples/wifi_interface.rs) example.
 
 ## Boundary and scope
 
@@ -20,12 +24,22 @@ legacy reception with HT20; `LegacyWifiDecoder` combines OFDM and DSSS/CCK;
 `LegacyOfdmDecoder` and `DsssCckDecoder` select one legacy receiver explicitly.
 Each reconstructs FCS-valid `RecoveredFrame` values.
 `RadioPacketSource::new(source, decoder, bounds)` implements the ordinary
-`PacketSource` contract and can be consumed by `Sniffer`. It calls
-`Packet::decode_from_link(LinkType::Ieee80211, ...)` after stripping the verified
-four-byte FCS from parser input only. `PacketRecord` retains the original
-FCS-bearing bytes and additive `RadioReceiveMetadata`; Wi-Fi annotations remain
-available independently. Future sources can implement `IqSource` without
-changing the PHY decoder or the packet parser.
+`PacketSource` contract and can be consumed by `Sniffer`. It uses each
+`RecoveredFrame`'s declared link type, integrity, and `FrameFraming`, removing
+only the declared trailer from parser input. Wi-Fi decoders publish verified
+four-byte FCS trailers; other codecs need not use that framing. `PacketRecord`
+retains the original recovered bytes and `RadioReceiveMetadata`; Wi-Fi
+annotations remain available independently. Sources can implement `IqSource`
+without changing the PHY decoder or packet parser.
+
+The reverse direction uses `PacketEncoder` to produce `EncodedSamples`, then
+`IqSink` to store or emit them. `OwnedSamples` contains CS8 data and its sample
+rate, not Wi-Fi-specific MAC fields. `WifiPacketEncoder::Legacy` and `Ht20`
+implement the same contract. A synthetic non-Wi-Fi codec test exercises the
+same sample source, sink, and packet I/O traits; it demonstrates the extension
+boundary, not an additional production protocol. `IqSinkOutcome` reports
+complex-sample units and local completion separately from `WriteReport`'s
+packet-byte counts. Neither proves peer reception.
 
 Supported legacy modes are OFDM with 20 MHz channel spacing (including ERP-OFDM)
 and DSSS/CCK at 1, 2, 5.5 and 11 Mbps. Long preambles support all four
@@ -37,8 +51,9 @@ PBCC, and reduced-clock OFDM remain unsupported by this decoder. A valid legacy
 SIGNAL alone does not prove a legacy frame because HT mixed format shares its
 preamble; signaling and DATA integrity must also pass. The radio layer's job is
 to recover raw MAC bytes. Association, rate control, and other Wi-Fi state
-machines are separate surfaces. Radiotap monitor injection is a separate
-link-layer path; native packet-to-IQ transmission is described below.
+machines are separate surfaces. Radiotap monitor injection and native
+packet-to-IQ transmission are backend implementations behind the same Wi-Fi
+packet interface; the lower-level APIs below remain available.
 
 ## Packet-shaped IQ transmission
 
@@ -137,7 +152,10 @@ cargo run --release -p crafter --features radio-hackrf --example radio_transmit 
 The native callback owns its waveform and initializes every valid transfer
 byte; the final transfer is rounded to a USB packet, zero-padded to that
 boundary, and padding is counted separately. RX and
-TX share one process-wide libhackrf ownership lock. Cancellation, deadline,
+TX share process-wide libhackrf ownership. `HackRfDuplex` coordinates both
+directions for `PacketWire::wifi`: each transmit stops receiving first, and a
+later receive period starts a new epoch. Cloned duplex handles share that same
+owner; they are not independent devices or simultaneous RF chains. Cancellation, deadline,
 native start/stop/query errors, firmware shortfalls, incomplete repetitions,
 and invalid callback buffers fail with a structured error. `HackRfTxStats`
 reports requested, supplied, padded and discarded samples, callbacks, completed
@@ -398,9 +416,11 @@ The callback owns copied cs8 data before returning. Pending and verified chunks
 share `max_buffer_samples`; overflow terminates acquisition with a structured
 error. A query outside the callback verifies only samples received before that
 query began. Samples arriving during a query wait for the next query. Firmware
-shortfall counters must remain zero while actively receiving; changed,
-unavailable or erroneous counters stop acquisition and discard the unverified
-interval. The verified prefix remains readable before a sticky error. Shutdown
+shortfall counters are checked while actively receiving. An increase discards
+the unverified interval and records an unknown-loss discontinuity; later
+independently verified segments can still be delivered. Counter-query failures
+terminate acquisition with a sticky error.
+Already verified segments remain readable. Shutdown
 never retroactively qualifies the remaining tail, even if firmware clears its
 counters. No exact lost-sample count or fabricated time anchor is inferred.
 `stats()` retains discarded-sample, overflow and unknown-continuity diagnostics
@@ -415,6 +435,7 @@ arguments it replays the independent synthetic 6 Mb/s fixture:
 ```sh
 cargo run -p crafter --features radio --example radio_receive
 cargo run -p crafter --features radio --example radio_receive -- --replay samples.cs8
+cargo run -p crafter --features radio --example radio_receive -- --interface --modern --replay crafter/tests/fixtures/iq/ht-ampdu-7-gi800-ldpc-duplicate.cs8
 ```
 
 Raw replay defaults to 20 Msps, one second and 20 million samples at the
@@ -568,6 +589,80 @@ Keep real artifacts and timing policies outside tracked files.
 
 ## Qualification and limits
 
+### Shared-interface qualification
+
+Functional revision `7500db1a83a5f1930fccaf5eeb484a69bdaa26f3` was exercised
+through `PacketWire::wifi`, with original binary/build digests retained in
+private receipts. Subsequent qualification-only fixes did not alter the core
+library or receive/transmit executable sources; their separate verification
+revision is recorded rather than relabeling hardware executions.
+
+| Evidence | Verified scope |
+| --- | --- |
+| HackRF transmission, independent monitor reception | Three complete runs of all 15 legacy rate/preamble cases using 29-byte PSDUs; three complete runs of all 48 single-stream HT20 cases using 100-byte PSDUs |
+| Monitor transmission, independent HackRF reception | Exact original frames with valid FCS for legacy OFDM 6 Mbps and HT20 mixed BCC MCS0 with 800 ns guard interval |
+| Fresh paired reception | Three successive bounded DSSS beacon comparisons: 33/40/56, 33/39/57, and 29/31/58 (exact matches / eligible radio / eligible reference) |
+| Saved IQ through the shared interface | All 43 previously matched occurrences reproduced with identical bytes and occurrence coordinates |
+| Monitor receive adapter | 100 records read through the public interface; driver capture-loss counters unavailable, explicitly unknown |
+
+The fresh receive population is on-channel beacons, selected by the same
+frame-control mask/value on both inputs, after integrity checks. Numerical
+targets were frozen before those three runs: at least six radio observations,
+five reference observations, four matches, and 50% matched on each side.
+All original frames and exclusions remain in the evidence. This is not
+all-frame completeness: different driver receive filters can expose different
+control-frame populations even on the same channel.
+
+The accepted receives had no application queue overflow or reference kernel
+drops. They did have firmware-loss intervals and discarded unverified samples.
+Only frames wholly inside independently verified sample segments were eligible;
+sample-clock uncertainty was bounded from acquisition receipts, never fitted
+to matching packet bytes. This establishes bounded segmented reception, not
+lossless continuous capture at 20 million samples per second. All accepted
+device operations completed and their external configuration was restored.
+
+Transmit matrices may combine retained bounded parts and per-case settings;
+they are not uninterrupted streams. Every accepted part completed without
+firmware shortfalls. Failed larger legacy payload and long repeated-burst
+attempts remain excluded, not fixed by this refactor. Reference trailers were
+absent in the monitor TX-matrix captures, so raw MAC/rate agreement is verified
+without claiming independently observed FCS. Optional PHY fields were checked
+only when known. Saved-reference HT configuration gaps are explicitly scoped
+to known-field agreement, not interpreted as a complete configuration match.
+
+Independent synthetic fixtures cover a much larger receive matrix than the
+live checks: all supported legacy and HT20 modes, aggregation, error controls,
+STBC, and extension training. The live evidence above does not qualify every
+HT receive configuration, additional spatial streams, HT40, 5 GHz operation,
+Wi-Fi 5–7, a managed radio connection, new ciphers, or universal real-time
+performance. Historical measurements below remain historical, not new proof
+of current runtime continuity or sensitivity.
+
+### Rechecking integrated evidence
+
+The examples' `--interface` receive path and native transmit path use the
+shared public interface. Operator-supplied bounded collectors retain original
+IQ, pcap, complete terminal reports, timing, loss, build identity, and cleanup
+receipts under ignored storage. No device selection or capture orchestration
+is part of the library. Recompute comparisons from those original artifacts:
+
+```sh
+cargo run -p crafter --features radio --example radio_compare -- --compare-monitor-transmit RUN.json REPORT.json
+cargo run -p crafter --features radio --example radio_compare -- --verify-transmit-qualification QUALIFICATION.json
+cargo run -p crafter --features radio --example radio_compare -- --verify-interface-qualification target/interface-qualification/summary.json
+```
+
+The interface summary (`crafter.interface.qualification/v1`) references hashed
+source evidence for at least three independent live receives, a saved-IQ
+regression, both legacy/HT20 transmit aggregates, and monitor-to-radio
+transmission. Its verifier recomputes comparisons and checks terminal status,
+sample continuity, fixed targets, artifact identities, and declared coverage
+gaps. An optional `frame_control` policy is a little-endian 16-bit mask/value
+test on the MAC frame-control field; it must exactly match the frozen target
+selector and applies symmetrically after integrity validation. Missing metadata
+cannot be promoted to known by the summary. The example's synthetic verifier
+tests check rejection behavior; they do not substitute for hardware artifacts.
+
 ### Earlier OFDM qualification
 
 The standalone OFDM candidate at functional revision `fce1ad75` passed three independent 20-second captures at
@@ -681,6 +776,7 @@ unchanged. Run the feature tests and the ordinary static release gate locally:
 
 ```sh
 cargo test -p crafter --features radio --all-targets
+cargo test -p crafter --features radio --test packet_interface --test interface_qualification
 cargo fmt --all -- --check
 .agents/scripts/check-crafter-release --static
 ```
