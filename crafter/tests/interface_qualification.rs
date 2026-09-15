@@ -23,6 +23,18 @@ use std::{
 const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
 
 #[test]
+fn persisted_comparison_fractions_preserve_exact_values() {
+    for denominator in 1..128 {
+        for numerator in 0..=denominator {
+            let report = json!({"fraction": numerator as f64 / denominator as f64});
+            let encoded = serde_json::to_vec(&report).unwrap();
+            let restored: Value = serde_json::from_reader(encoded.as_slice()).unwrap();
+            assert_eq!(restored, report, "{numerator}/{denominator}");
+        }
+    }
+}
+
+#[test]
 fn receive_target_scope_cannot_silently_change() {
     let report = json!({"policy":{"frame_control":{"mask":252,"value":128}}});
     assert!(interface_qualification::check_targets(&report, &json!({}))

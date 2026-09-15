@@ -68,6 +68,7 @@ behaviors:
       - declared_frame_control_selection_applies_identically_to_both_receivers
       - selection_preserves_raw_evidence_and_does_not_bypass_integrity_checks
       - frozen_receive_targets_bind_the_frame_selection_policy
+      - persisted_comparison_fractions_round_trip_without_numeric_drift
 coverage_cases:
   - crafter-normalized-wifi-equivalence
   - crafter-normalized-wifi-provenance
