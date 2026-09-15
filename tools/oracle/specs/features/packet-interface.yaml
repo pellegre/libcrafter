@@ -65,6 +65,9 @@ behaviors:
       - receive_qualification_retains_loss_and_matches_only_verified_segments
       - incomplete_reference_phy_requires_explicit_known_fields_scope_and_disclosure
       - undisclosed_or_unknown_qualification_gaps_remain_failures
+      - declared_frame_control_selection_applies_identically_to_both_receivers
+      - selection_preserves_raw_evidence_and_does_not_bypass_integrity_checks
+      - frozen_receive_targets_bind_the_frame_selection_policy
 coverage_cases:
   - crafter-normalized-wifi-equivalence
   - crafter-normalized-wifi-provenance

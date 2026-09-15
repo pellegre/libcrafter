@@ -23,6 +23,20 @@ use std::{
 const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
 
 #[test]
+fn receive_target_scope_cannot_silently_change() {
+    let report = json!({"policy":{"frame_control":{"mask":252,"value":128}}});
+    assert!(interface_qualification::check_targets(&report, &json!({}))
+        .unwrap_err()
+        .to_string()
+        .contains("frame selection"));
+    let targets = json!({"frame_control":{"mask":252,"value":8}});
+    assert!(interface_qualification::check_targets(&report, &targets)
+        .unwrap_err()
+        .to_string()
+        .contains("frame selection"));
+}
+
+#[test]
 fn unknown_reference_configuration_requires_explicit_scope_and_inventory() {
     let report = json!({"qualification_gaps":[compare::REFERENCE_HT_CONFIGURATION_GAP]});
     let run = json!({"phy_scope":"known_fields","evidence_gaps":report["qualification_gaps"]});
