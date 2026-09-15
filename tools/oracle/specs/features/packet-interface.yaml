@@ -63,6 +63,8 @@ behaviors:
       - live_completion_never_claims_peer_reception
       - monitor_transmit_comparison_reuses_independent_radio_observations
       - receive_qualification_retains_loss_and_matches_only_verified_segments
+      - incomplete_reference_phy_requires_explicit_known_fields_scope_and_disclosure
+      - undisclosed_or_unknown_qualification_gaps_remain_failures
 coverage_cases:
   - crafter-normalized-wifi-equivalence
   - crafter-normalized-wifi-provenance

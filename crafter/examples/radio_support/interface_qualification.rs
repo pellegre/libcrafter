@@ -164,7 +164,32 @@ pub(super) fn verify_iq(base: &Path, run: &Value, receive: &Path) -> Result<()> 
     Ok(())
 }
 
-fn receive(base: &Path, run: &Value, revision: &str) -> Result<Value> {
+pub(super) fn check_rx_gaps(report: &Value, run: &Value, inventory: &Value) -> Result<()> {
+    let gaps = array(report, "qualification_gaps")?;
+    if gaps.is_empty() {
+        if !run["evidence_gaps"].is_null() && run["evidence_gaps"] != json!([]) {
+            return Err("declared RX evidence gaps differ from observations".into());
+        }
+        return Ok(());
+    }
+    if gaps != &vec![json!(compare::REFERENCE_HT_CONFIGURATION_GAP)]
+        || run["evidence_gaps"] != report["qualification_gaps"]
+        || run["phy_scope"] != "known_fields"
+    {
+        return Err("unresolved or undisclosed RX evidence gap".into());
+    }
+    let disclosed = inventory.as_array().is_some_and(|entries| {
+        entries.iter().any(|entry| {
+            entry["mode"] == "reference-ht-configuration" && text(entry, "reason").is_ok()
+        })
+    });
+    if !disclosed {
+        return Err("unverified reference HT configuration missing from inventory".into());
+    }
+    Ok(())
+}
+
+fn receive(base: &Path, run: &Value, revision: &str, inventory: &Value) -> Result<Value> {
     state(run, revision)?;
     if run["api"] != "PacketWire"
         || run["backends"] != json!(["hackrf", "monitor"])
@@ -196,12 +221,10 @@ fn receive(base: &Path, run: &Value, revision: &str) -> Result<Value> {
         check_acquisition(&evidence["acquisition"])?;
     }
     let report = compare::report(a, ac, b, bc, policy, evidence);
-    if report["status"] != "measured"
-        || report["exact_matches"].as_u64().unwrap_or(0) == 0
-        || !array(&report, "qualification_gaps")?.is_empty()
-    {
-        return Err("no eligible exact RX matches or unresolved PHY evidence".into());
+    if report["status"] != "measured" || report["exact_matches"].as_u64().unwrap_or(0) == 0 {
+        return Err("no eligible exact RX matches".into());
     }
+    check_rx_gaps(&report, run, inventory)?;
     let (_, recorded) = json_file(base, &run["comparison"], "RX comparison")?;
     for key in [
         "schema",
@@ -387,7 +410,7 @@ pub fn verify(path: &str) -> Result<Value> {
         if !ids.insert(text(run, "id")?) {
             return Err("duplicate RX run id".into());
         }
-        let report = receive(base, run, revision)?;
+        let report = receive(base, run, revision, &value["untested_modes"])?;
         if run["kind"] == "live" {
             let (_, targets) = json_file(base, &value["rx_targets"], "fixed RX targets")?;
             if run["targets_sha256"] != value["rx_targets"]["sha256"] {
