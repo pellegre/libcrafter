@@ -59,6 +59,10 @@ name = "radio_receive"
 required-features = ["radio"]
 
 [[example]]
+name = "wifi_interface"
+required-features = ["radio"]
+
+[[example]]
 name = "radio_compare"
 required-features = ["radio"]
 

@@ -22,7 +22,7 @@ pub struct HackRfConfig {
     pub antenna_power_enabled: bool,
 }
 impl HackRfConfig {
-    fn validate(&self) -> RadioResult<()> {
+    pub(super) fn validate(&self) -> RadioResult<()> {
         self.rx.validate()?;
         if self.serial.is_empty() || self.serial.as_bytes().contains(&0) {
             return Err(RadioError::Invalid {
@@ -223,7 +223,42 @@ pub struct HackRfSource {
     shared: Arc<Shared>,
     worker: Option<JoinHandle<()>>,
 }
+#[derive(Clone)]
+pub(super) struct HackRfCancel(Arc<Shared>);
+impl HackRfCancel {
+    pub(super) fn cancel(&self) {
+        let mut state = self.0.lock();
+        state.cancelled = true;
+        state.stop = true;
+        drop(state);
+        self.0.wake.notify_all();
+    }
+}
 impl HackRfSource {
+    #[cfg(feature = "radio-hackrf")]
+    pub(super) fn open_shared(
+        config: HackRfConfig,
+        device: native::SharedDevice,
+    ) -> RadioResult<Self> {
+        config.validate()?;
+        let rx = config.rx.clone();
+        Self::spawn(rx, move || Ok(native::Native::shared(config, device)))
+    }
+    pub(super) fn cancellation(&self) -> HackRfCancel {
+        HackRfCancel(Arc::clone(&self.shared))
+    }
+    /// Stop acquisition while retaining verified queued samples for draining.
+    pub(super) fn stop_acquisition(&mut self) -> RadioResult<HackRfStats> {
+        self.shared.lock().stop = true;
+        self.shared.wake.notify_all();
+        self.join();
+        let state = self.shared.lock();
+        if let Some(Err(error)) = &state.terminal {
+            return Err(error.clone());
+        }
+        drop(state);
+        Ok(self.stats())
+    }
     #[cfg(feature = "radio-hackrf")]
     pub fn open_live(config: HackRfConfig) -> RadioResult<Self> {
         config.validate()?;
@@ -359,15 +394,18 @@ fn supervise(shared: &Shared, driver: &mut impl Driver) {
     let stopped = driver.stop(); // callbacks cease before terminal notification
     let mut s = shared.lock();
     Shared::discard_pending(&mut s);
+    if let Err(e) = stopped {
+        s.fault = Some(e);
+    }
     if s.cancelled {
         s.stats.discarded_samples += s.ready.iter().map(|c| c.len() as u64).sum::<u64>();
         s.ready.clear();
         s.buffered = 0;
-        s.terminal = Some(Ok(StreamEnd::Cancelled));
+        s.terminal = Some(match s.fault.take() {
+            Some(error) => Err(error),
+            None => Ok(StreamEnd::Cancelled),
+        });
     } else {
-        if let Err(e) = stopped {
-            s.fault = Some(e);
-        }
         s.terminal = Some(match s.fault.take() {
             Some(e) => Err(e),
             None => Ok(StreamEnd::LimitReached),
@@ -376,6 +414,10 @@ fn supervise(shared: &Shared, driver: &mut impl Driver) {
     shared.wake.notify_all();
 }
 impl IqSource for HackRfSource {
+    fn cancel_with_result(&mut self) -> RadioResult<()> {
+        self.cancel();
+        self.stop_acquisition().map(|_| ())
+    }
     fn next_event(&mut self) -> RadioResult<IqEvent> {
         let mut s = self.shared.lock();
         loop {
@@ -433,7 +475,9 @@ impl IqSource for HackRfSource {
         s.stats.discarded_samples += s.ready.iter().map(|c| c.len() as u64).sum::<u64>();
         s.ready.clear();
         s.buffered = 0;
-        s.terminal = Some(Ok(StreamEnd::Cancelled));
+        if !matches!(s.terminal, Some(Err(_))) {
+            s.terminal = Some(Ok(StreamEnd::Cancelled));
+        }
     }
 }
 impl Drop for HackRfSource {

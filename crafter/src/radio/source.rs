@@ -64,18 +64,27 @@ impl<S: IqSource, D: PhyDecoder> RadioPacketSource<S, D> {
     }
     /// Cancel acquisition, discard queued frames and reset partial decoder state.
     pub fn cancel(&mut self) {
-        self.source.cancel();
+        let _ = self.cancel_with_result();
+    }
+    /// Cancel while retaining any transport shutdown failure for the caller.
+    pub fn cancel_with_result(&mut self) -> RadioResult<()> {
+        let result = self.source.cancel_with_result();
         self.pending.clear();
         self.diagnostics = self
             .decoder
             .reset(ResetReason::End(StreamEnd::Cancelled))
             .diagnostics;
         self.end = Some(StreamEnd::Cancelled);
+        result
     }
     fn fail(&mut self, error: RadioError) -> WireError {
-        self.cancel();
+        let shutdown = self.cancel_with_result();
         self.failed = true;
-        WireError::backend("radio", "receive", error.to_string())
+        let detail = match shutdown {
+            Err(stop) if stop != error => format!("{error}; shutdown: {stop}"),
+            _ => error.to_string(),
+        };
+        WireError::backend("radio", "receive", detail)
     }
 }
 impl<S: IqSource, D: PhyDecoder> PacketSource for RadioPacketSource<S, D> {

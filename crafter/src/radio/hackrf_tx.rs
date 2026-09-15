@@ -222,6 +222,14 @@ impl TxShared {
     pub(super) fn done(&self) -> bool {
         self.lock().done
     }
+    pub(super) fn cancel_requested(&self) -> bool {
+        if self.cancelled.load(Ordering::Acquire) {
+            self.lock().stats.cancelled = true;
+            true
+        } else {
+            false
+        }
+    }
     pub(super) fn stats(&self) -> HackRfTxStats {
         self.lock().stats.clone()
     }
@@ -230,7 +238,12 @@ impl TxShared {
     }
     pub(super) fn fail(&self, error: RadioError) {
         let mut s = self.lock();
-        s.fault = Some(error);
+        s.fault = Some(match s.fault.take() {
+            Some(previous) if previous != error => {
+                RadioError::Source(format!("{previous}; additionally: {error}"))
+            }
+            _ => error,
+        });
         s.done = true;
     }
     pub(super) fn finish(
@@ -242,8 +255,8 @@ impl TxShared {
         state.stats.firmware_shortfalls = shortfalls.0;
         state.stats.longest_shortfall = shortfalls.1;
         state.stats.stopped = stopped;
-        if let Some(error) = state.fault.take() {
-            return Err(error);
+        if let Some(error) = &state.fault {
+            return Err(error.clone());
         }
         if !stopped || state.stats.completed_repetitions != self.repetitions {
             return Err(RadioError::Source(
@@ -264,11 +277,26 @@ pub struct HackRfTxSink {
     config: HackRfTxConfig,
     cancelled: Arc<AtomicBool>,
     last_stats: Option<HackRfTxStats>,
+    reset_cancellation: bool,
     #[cfg(feature = "radio-hackrf")]
     native: super::hackrf::native::NativeTx,
 }
 
 impl HackRfTxSink {
+    #[cfg(feature = "radio-hackrf")]
+    pub(super) fn shared(
+        config: HackRfTxConfig,
+        device: super::hackrf::native::SharedDevice,
+        cancelled: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            native: super::hackrf::native::NativeTx::shared(config.clone(), device),
+            config,
+            cancelled,
+            last_stats: None,
+            reset_cancellation: false,
+        }
+    }
     #[cfg(feature = "radio-hackrf")]
     pub fn open_live(config: HackRfTxConfig) -> RadioResult<Self> {
         config.validate()?;
@@ -278,6 +306,7 @@ impl HackRfTxSink {
             cancelled: Arc::new(AtomicBool::new(false)),
             last_stats: None,
             native,
+            reset_cancellation: true,
         })
     }
     pub fn cancel(&self) {
@@ -302,7 +331,9 @@ impl<T: EncodedSamples> IqSink<T> for HackRfTxSink {
                 reason: "encoded samples do not match the configured device rate",
             });
         }
-        self.cancelled.store(false, Ordering::Release);
+        if self.reset_cancellation {
+            self.cancelled.store(false, Ordering::Release);
+        }
         let shared = Arc::new(TxShared::new(
             tx.samples_cs8(),
             &self.config,
@@ -356,6 +387,18 @@ mod tests {
         assert!(!shared.stats().stopped);
         assert!(shared.finish((1, 4), true).is_err());
         assert_eq!(shared.stats().firmware_shortfalls, 1);
+    }
+
+    #[test]
+    fn radio_hackrf_tx_preserves_operation_and_cleanup_errors() {
+        let shared = TxShared::new(&[1, 2], &config(), Arc::new(AtomicBool::new(false))).unwrap();
+        assert!(shared.fill(&mut [0; 512]).is_some());
+        shared.fail(RadioError::Source("synthetic flush failure".into()));
+        shared.fail(RadioError::Source("synthetic stop failure".into()));
+        let error = shared.finish((0, 0), false).unwrap_err();
+        assert!(error.to_string().contains("synthetic flush failure"));
+        assert!(error.to_string().contains("synthetic stop failure"));
+        assert_eq!(shared.finish((0, 0), true).unwrap_err(), error);
     }
 
     #[test]

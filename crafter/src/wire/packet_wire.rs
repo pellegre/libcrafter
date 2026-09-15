@@ -168,6 +168,8 @@ pub enum WhadMode {
 /// running one sniffer or transmitter per opened source or writer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PacketWireTarget {
+    /// Normalized Wi-Fi monitor or sample interface.
+    Wifi { mode: super::InterfaceMode },
     /// Offline pcap file input.
     PcapFile {
         /// Path to the pcap file to read.
@@ -205,6 +207,7 @@ impl PacketWireTarget {
     /// Return the pcap file path when this target is file-backed.
     pub fn path(&self) -> Option<&Path> {
         match self {
+            Self::Wifi { .. } => None,
             Self::PcapFile { path } | Self::PcapRecorder { path, .. } => Some(path.as_path()),
             Self::PcapInterface { .. }
             | Self::RawSocketInterface { .. }
@@ -215,6 +218,7 @@ impl PacketWireTarget {
     /// Return the interface name when this target is interface-backed.
     pub fn interface(&self) -> Option<&str> {
         match self {
+            Self::Wifi { .. } => None,
             Self::PcapInterface { interface } | Self::RawSocketInterface { interface } => {
                 Some(interface.as_str())
             }
@@ -226,6 +230,7 @@ impl PacketWireTarget {
     /// Return the pcap link type configured for recorder targets.
     pub const fn pcap_link_type(&self) -> Option<PcapLinkType> {
         match self {
+            Self::Wifi { .. } => None,
             Self::PcapRecorder { link_type, .. } => Some(*link_type),
             Self::PcapFile { .. }
             | Self::PcapInterface { .. }
@@ -236,6 +241,7 @@ impl PacketWireTarget {
 
     fn backend_identifier(&self) -> String {
         match self {
+            Self::Wifi { mode } => format!("wifi:{mode:?}"),
             Self::PcapFile { path } => format!("pcap-file:{}", path.display()),
             Self::PcapRecorder { path, .. } => format!("pcap-recorder:{}", path.display()),
             Self::PcapInterface { interface } => format!("pcap-interface:{interface}"),
@@ -253,6 +259,7 @@ impl PacketWireTarget {
 /// values.
 pub struct PacketWireBuilder {
     target: PacketWireTarget,
+    interface_mode: Option<super::InterfaceMode>,
     pcap_filter: Option<String>,
     pcap_timeout: Option<Duration>,
     pcap_snaplen: u32,
@@ -270,6 +277,7 @@ impl PacketWireBuilder {
     fn new(target: PacketWireTarget) -> Self {
         Self {
             target,
+            interface_mode: None,
             pcap_filter: None,
             pcap_timeout: Some(DEFAULT_INTERFACE_TIMEOUT),
             pcap_snaplen: DEFAULT_INTERFACE_SNAPLEN,
@@ -374,13 +382,17 @@ impl PacketWireBuilder {
 
     /// Open this target as one packet wire.
     pub fn open(mut self) -> Result<PacketWire> {
+        let mut observed_link = None;
         if self.source.is_none() {
             match &self.target {
+                PacketWireTarget::Wifi { .. } => unreachable!("Wi-Fi uses its own opening adapter"),
                 PacketWireTarget::PcapFile { path } => {
-                    self.source = Some(Box::new(OfflinePcapSource::open_with_optional_filter(
+                    let source = OfflinePcapSource::open_with_optional_filter(
                         path,
                         self.pcap_filter.as_deref(),
-                    )?));
+                    )?;
+                    observed_link = Some(source.pcap_link_type());
+                    self.source = Some(Box::new(source));
                 }
                 PacketWireTarget::PcapInterface { interface } => {
                     let mut builder = PcapInterfaceSource::builder(interface.clone())
@@ -396,7 +408,10 @@ impl PacketWireBuilder {
                     if let Some(filter) = self.pcap_filter.as_deref() {
                         builder = builder.filter(filter);
                     }
-                    self.source = Some(Box::new(builder.open()?));
+                    let source = builder.open()?;
+                    observed_link = Some(source.pcap_link_type());
+                    validate_interface_framing(self.interface_mode, observed_link, &self.target)?;
+                    self.source = Some(Box::new(source));
                 }
                 PacketWireTarget::PcapRecorder { .. } => {}
                 PacketWireTarget::RawSocketInterface { .. } => {}
@@ -424,7 +439,9 @@ impl PacketWireBuilder {
 
         if self.writer.is_none() {
             match &self.target {
+                PacketWireTarget::Wifi { .. } => unreachable!("Wi-Fi uses its own opening adapter"),
                 PacketWireTarget::PcapRecorder { path, link_type } => {
+                    observed_link = Some(*link_type);
                     self.writer = Some(Box::new(PcapFileWriter::create(path, *link_type)?));
                 }
                 PacketWireTarget::PcapInterface { interface } => {
@@ -438,7 +455,9 @@ impl PacketWireBuilder {
                     } else {
                         builder = builder.no_timeout();
                     }
-                    self.writer = Some(Box::new(builder.open()?));
+                    let writer = builder.open()?;
+                    observed_link = Some(writer.pcap_link_type());
+                    self.writer = Some(Box::new(writer));
                 }
                 PacketWireTarget::PcapFile { .. } => {}
                 PacketWireTarget::RawSocketInterface { .. } => {}
@@ -466,10 +485,17 @@ impl PacketWireBuilder {
             }
         }
 
+        validate_interface_framing(self.interface_mode, observed_link, &self.target)?;
+        let interface_mode = self.interface_mode.or_else(|| {
+            observed_link.map(|link| super::InterfaceMode::RawCapture(link.link_type()))
+        });
         Ok(PacketWire {
             target: self.target,
             source: self.source,
             writer: self.writer,
+            wifi_descriptor: None,
+            wifi_control: None,
+            interface_mode,
         })
     }
 
@@ -590,6 +616,9 @@ impl RawSocketWireBuilder {
             target: PacketWireTarget::RawSocketInterface { interface },
             source: None,
             writer: Some(Box::new(writer)),
+            wifi_descriptor: None,
+            wifi_control: None,
+            interface_mode: None,
         })
     }
 }
@@ -795,9 +824,12 @@ impl fmt::Debug for PacketWireBuilder {
 /// typed errors, for example trying to read from a pcap recorder or write to a
 /// read-only pcap file input.
 pub struct PacketWire {
-    target: PacketWireTarget,
-    source: Option<OpenedPacketSource>,
-    writer: Option<OpenedPacketWriter>,
+    pub(super) target: PacketWireTarget,
+    pub(super) source: Option<OpenedPacketSource>,
+    pub(super) writer: Option<OpenedPacketWriter>,
+    pub(super) wifi_descriptor: Option<super::WifiInterfaceDescriptor>,
+    pub(super) wifi_control: Option<super::WifiInterfaceControl>,
+    pub(super) interface_mode: Option<super::InterfaceMode>,
 }
 
 impl PacketWire {
@@ -822,6 +854,36 @@ impl PacketWire {
         PacketWireBuilder::new(PacketWireTarget::PcapInterface {
             interface: interface.into(),
         })
+    }
+
+    /// Open an externally associated Wi-Fi interface as Ethernet packet I/O.
+    /// The kernel owns association, Wi-Fi framing, encryption, and retransmission.
+    /// Opening verifies Ethernet framing; it does not configure or verify association.
+    pub fn managed_wifi_interface(interface: impl Into<String>) -> PacketWireBuilder {
+        let mut builder = Self::pcap_interface(interface);
+        builder.interface_mode = Some(super::InterfaceMode::ManagedWifi);
+        builder
+    }
+
+    /// Open a kernel Ethernet interface through the same packet I/O contracts.
+    pub fn ethernet_interface(interface: impl Into<String>) -> PacketWireBuilder {
+        let mut builder = Self::pcap_interface(interface);
+        builder.interface_mode = Some(super::InterfaceMode::Ethernet);
+        builder
+    }
+
+    /// Inspect format and capabilities before consuming the source or writer.
+    pub fn descriptor(&self) -> super::PacketInterfaceDescriptor {
+        super::PacketInterfaceDescriptor {
+            mode: self.interface_mode,
+            packet_format: self.interface_mode.map(super::InterfaceMode::packet_format),
+            receive: self.has_source(),
+            transmit: self.has_writer(),
+            half_duplex: self
+                .wifi_descriptor
+                .as_ref()
+                .and_then(|descriptor| descriptor.half_duplex.then_some(true)),
+        }
     }
 
     /// Build a write-only raw socket interface target.
@@ -880,6 +942,7 @@ impl PacketWire {
             target,
             source,
             writer,
+            ..
         } = self;
 
         match (source, writer) {
@@ -903,6 +966,25 @@ impl fmt::Debug for PacketWire {
     }
 }
 
+fn validate_interface_framing(
+    mode: Option<super::InterfaceMode>,
+    observed: Option<PcapLinkType>,
+    target: &PacketWireTarget,
+) -> Result<()> {
+    if matches!(
+        mode,
+        Some(super::InterfaceMode::Ethernet | super::InterfaceMode::ManagedWifi)
+    ) && observed != Some(PcapLinkType::Ethernet)
+    {
+        return Err(WireError::unsupported_capability(
+            "Ethernet packet interface",
+            Some(target.backend_identifier()),
+            "the opened backend does not expose Ethernet frames",
+        ));
+    }
+    Ok(())
+}
+
 fn unsupported_source(target: &PacketWireTarget) -> WireError {
     WireError::unsupported_capability(
         "read",
@@ -913,6 +995,7 @@ fn unsupported_source(target: &PacketWireTarget) -> WireError {
 
 fn unsupported_source_reason(target: &PacketWireTarget) -> &'static str {
     match target {
+        PacketWireTarget::Wifi { .. } => "Wi-Fi interface was opened without receive capability",
         PacketWireTarget::PcapRecorder { .. } => {
             "pcap recorder targets are write-only; use pcap_file for pcap input"
         }
@@ -951,6 +1034,7 @@ fn unsupported_writer(target: &PacketWireTarget) -> WireError {
 
 fn unsupported_writer_reason(target: &PacketWireTarget) -> &'static str {
     match target {
+        PacketWireTarget::Wifi { .. } => "Wi-Fi interface was opened without transmit capability",
         PacketWireTarget::PcapFile { .. } => {
             "pcap file targets are read-only; use pcap_recorder for pcap output"
         }
@@ -1182,6 +1266,64 @@ mod tests {
             writer.flush().unwrap();
         }
         TempPcap { path }
+    }
+
+    #[test]
+    fn managed_and_ethernet_modes_use_the_same_packet_contract() {
+        use crate::wire::{InterfaceMode, PacketFormat};
+        assert_eq!(
+            PacketWire::managed_wifi_interface("synthetic").interface_mode,
+            Some(InterfaceMode::ManagedWifi)
+        );
+        assert_eq!(
+            PacketWire::ethernet_interface("synthetic").interface_mode,
+            Some(InterfaceMode::Ethernet)
+        );
+        let temp = empty_temp_pcap("ethernet-modes");
+        let target = PacketWireTarget::PcapInterface {
+            interface: "synthetic".into(),
+        };
+        for mode in [InterfaceMode::ManagedWifi, InterfaceMode::Ethernet] {
+            // A real offline pcap adapter supplies the same observed Ethernet
+            // framing as the externally prepared kernel adapter.
+            let mut builder = PacketWire::pcap_file(&temp.path);
+            builder.interface_mode = Some(mode);
+            let wire = builder.open().unwrap();
+            let descriptor = wire.descriptor();
+            assert_eq!(descriptor.mode, Some(mode));
+            assert_eq!(descriptor.packet_format, Some(PacketFormat::Ethernet));
+            assert!(descriptor.receive);
+            assert!(!descriptor.transmit);
+            assert_eq!(descriptor.half_duplex, None);
+            assert!(wire.source().unwrap().next_record().unwrap().is_none());
+            for framing in [
+                None,
+                Some(PcapLinkType::Ieee80211),
+                Some(PcapLinkType::Ieee80211Radiotap),
+            ] {
+                assert!(validate_interface_framing(Some(mode), framing, &target).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn raw_capture_descriptor_reports_observed_framing_with_and_without_filter() {
+        use crate::wire::{InterfaceMode, PacketFormat};
+        let temp = empty_temp_pcap("capture-descriptor");
+        for builder in [
+            PacketWire::pcap_file(&temp.path),
+            PacketWire::pcap_file(&temp.path).filter("ip"),
+        ] {
+            let wire = builder.open().unwrap();
+            assert_eq!(
+                wire.descriptor().mode,
+                Some(InterfaceMode::RawCapture(LinkType::Ethernet))
+            );
+            assert_eq!(
+                wire.descriptor().packet_format,
+                Some(PacketFormat::Capture(LinkType::Ethernet))
+            );
+        }
     }
 
     #[test]
