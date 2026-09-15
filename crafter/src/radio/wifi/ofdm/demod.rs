@@ -4,7 +4,7 @@ use super::{
     signal::{SignalInfo, TRELLIS_SIGNS},
     sync::{fft64, Acquisition},
 };
-use crate::radio::{stbc, ComplexSample, PhyDiagnostic};
+use crate::radio::{wifi::ht::stbc, ComplexSample, PhyDiagnostic};
 
 fn feedback(state: &mut u8) -> u8 {
     let bit = ((*state >> 6) ^ (*state >> 3)) & 1;
@@ -50,7 +50,7 @@ pub(super) fn decode_data_mode(
 ) -> Result<(Vec<u8>, PhyDiagnostic), ()> {
     decode_data_mode_with_format(samples, a, info, ht_guard, false, None)
 }
-pub(super) fn decode_data_mode_with_format(
+pub(in crate::radio) fn decode_data_mode_with_format(
     samples: &[ComplexSample],
     a: &Acquisition,
     info: SignalInfo,
@@ -63,7 +63,7 @@ pub(super) fn decode_data_mode_with_format(
     Ok((recover_bcc(&coded, info)?, tracking))
 }
 
-pub(super) fn demodulate_data(
+pub(in crate::radio) fn demodulate_data(
     samples: &[ComplexSample],
     a: &Acquisition,
     info: SignalInfo,
@@ -329,7 +329,10 @@ fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
     descramble_psdu(bits, info.psdu_bytes)
 }
 
-pub(super) fn descramble_psdu(mut bits: Vec<u8>, psdu_bytes: usize) -> Result<Vec<u8>, ()> {
+pub(in crate::radio) fn descramble_psdu(
+    mut bits: Vec<u8>,
+    psdu_bytes: usize,
+) -> Result<Vec<u8>, ()> {
     let tail = 16 + 8 * psdu_bytes;
     if bits.len() < tail {
         return Err(());

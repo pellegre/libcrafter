@@ -1,12 +1,10 @@
-//! Legacy and opt-in HT DATA receive paths; source map in docs/wifi-phy-evidence.json.
+//! Legacy OFDM streaming coordination with optional HT receive delegation.
 use super::{
-    demod::{
-        decode_data, decode_data_mode_with_format, demodulate_data, descramble_psdu, valid_fcs,
-    },
+    demod::{decode_data, valid_fcs},
     signal::decode_signal,
     sync::{Acquisition, SyncEvent, Synchronizer},
 };
-use crate::radio::{ampdu, ht, ldpc, *};
+use crate::radio::{wifi::ht, *};
 use crate::LinkType;
 
 #[cfg(test)]
@@ -25,96 +23,7 @@ struct Pending {
     start: IqPosition,
     samples: Vec<ComplexSample>,
     info: Option<SignalInfo>,
-    ht: Option<HtSignalFields>,
-    ldpc: Option<ldpc::rate::Layout>,
-    greenfield: bool,
-}
-impl Pending {
-    fn configure_ht(
-        &mut self,
-        fields: HtSignalFields,
-        config: &RxConfig,
-        reserved: usize,
-        greenfield: bool,
-    ) -> bool {
-        if fields.channel_width_40_mhz
-            || fields.mcs >= 8
-            || fields.stbc > 1
-            || u16::from(fields.stbc) + u16::from(fields.extension_spatial_streams) > 3
-            || fields.psdu_bytes < 4
-            || (!fields.aggregation && usize::from(fields.psdu_bytes) > config.max_frame_bytes)
-            || (greenfield && fields.short_guard_interval)
-        {
-            return false;
-        }
-        let (nbpsc, ndbps) = [
-            (1, 26),
-            (2, 52),
-            (2, 78),
-            (4, 104),
-            (4, 156),
-            (6, 208),
-            (6, 234),
-            (6, 260),
-        ][fields.mcs as usize];
-        let stride = if fields.short_guard_interval { 72 } else { 80 };
-        let ldpc = if fields.ldpc {
-            use ldpc::Rate::*;
-            let rate = [
-                Half,
-                Half,
-                ThreeQuarters,
-                Half,
-                ThreeQuarters,
-                TwoThirds,
-                ThreeQuarters,
-                FiveSixths,
-            ][fields.mcs as usize];
-            let Ok(layout) = ldpc::rate::Layout::new(
-                fields.psdu_bytes,
-                (52 * nbpsc) as u16,
-                rate,
-                fields.stbc == 1,
-            ) else {
-                return false;
-            };
-            Some(layout)
-        } else {
-            None
-        };
-        let group = if fields.stbc == 1 { 2 } else { 1 };
-        let symbols = ldpc.map_or_else(
-            || group * (16 + 8 * usize::from(fields.psdu_bytes) + 6).div_ceil(group * ndbps),
-            |layout| layout.symbols,
-        );
-        let extension_fields = [0, 1, 2, 4][usize::from(fields.extension_spatial_streams)];
-        let data_offset = (if greenfield { 160 } else { 400 })
-            + (usize::from(fields.stbc) + extension_fields) * 80;
-        let required = data_offset + symbols * stride;
-        if required.saturating_sub(self.samples.capacity())
-            > config.max_buffer_samples.saturating_sub(reserved)
-        {
-            return false;
-        }
-        let Some(end) = self.acquisition.signal_start.checked_add(required as u64) else {
-            return false;
-        };
-        self.samples
-            .reserve_exact(required.saturating_sub(self.samples.len()));
-        self.info = Some(SignalInfo {
-            rate_bps: (ndbps as u64 * 20_000_000 / stride as u64) as u32,
-            coded_bits_per_symbol: 52 * nbpsc,
-            data_bits_per_symbol: ndbps,
-            psdu_bytes: usize::from(fields.psdu_bytes),
-            data_symbols: symbols,
-            data_start: self.acquisition.signal_start + data_offset as u64,
-            end_sample_index: end,
-        });
-        self.ht = Some(fields);
-        self.ldpc = ldpc;
-        self.greenfield = greenfield;
-        true
-    }
+    ht: Option<ht::rx::Candidate>,
 }
 /// Bounded streaming legacy OFDM receiver. Only integrity-valid PSDUs are delivered.
 #[derive(Default)]
@@ -126,7 +35,7 @@ pub struct LegacyOfdmDecoder {
     pending: [Option<Pending>; 2],
     terminal: bool,
     stats: DecoderStats,
-    ht_enabled: bool,
+    ht: ht::rx::Receiver,
     // Dispatcher output budget is not a capture reconfiguration. Changing
     // RxConfig between internal slices would discard an in-flight PPDU.
     output_allowance: Option<usize>,
@@ -140,19 +49,19 @@ impl LegacyOfdmDecoder {
     }
     pub(in crate::radio) fn with_ht() -> Self {
         Self {
-            ht_enabled: true,
+            ht: ht::rx::Receiver::ht20(),
             ..Self::default()
         }
     }
-    pub(in crate::radio) fn ht_enabled(&self) -> bool {
-        self.ht_enabled
+    pub(in crate::radio) fn uses_ht(&self) -> bool {
+        self.ht.accepts_ht()
     }
     pub(in crate::radio) fn set_output_allowance(&mut self, allowance: usize) {
         self.output_allowance = Some(allowance);
     }
     fn publish_psdu(
         &mut self,
-        mut frame: RecoveredFrame,
+        frame: RecoveredFrame,
         aggregate: bool,
         out: &mut DecodeOutput,
     ) -> RadioResult<()> {
@@ -161,62 +70,14 @@ impl LegacyOfdmDecoder {
             .unwrap_or(frame.config.max_pending_frames)
             .min(frame.config.max_pending_frames);
         if aggregate {
-            let bytes = std::mem::take(&mut frame.bytes);
-            let scan = ampdu::Scan::new(&bytes, frame.config.max_frame_bytes).map_err(|_| {
-                RadioError::Limit {
-                    context: "HT aggregate bytes",
-                    limit: 65535,
-                    actual: bytes.len() as u64,
-                }
-            })?;
-            let (mut delimiters, mut fcs, mut truncated, mut oversized) = (0, 0, 0, 0);
-            for event in scan {
-                match event {
-                    ampdu::Event::Frame {
-                        delimiter_offset,
-                        control_bits,
-                        bytes,
-                    } => {
-                        if out.frames.len() >= limit {
-                            return Err(RadioError::Limit {
-                                context: "HT aggregate pending frames",
-                                limit: limit as u64,
-                                actual: (out.frames.len() + 1) as u64,
-                            });
-                        }
-                        let mut recovered = frame.clone();
-                        recovered.bytes = bytes.to_vec();
-                        recovered.diagnostics.push(PhyDiagnostic::Ampdu {
-                            delimiter_offset,
-                            control_bits,
-                        });
-                        out.frames.push(recovered);
-                        self.stats.valid_frames = self.stats.valid_frames.saturating_add(1);
-                    }
-                    ampdu::Event::Empty { .. } => {}
-                    ampdu::Event::Invalid { error, .. } => match error {
-                        ampdu::Error::BadFcs => fcs += 1,
-                        ampdu::Error::TruncatedMpdu { .. } => truncated += 1,
-                        ampdu::Error::MpduLimit { .. } => oversized += 1,
-                        _ => delimiters += 1,
-                    },
-                }
-            }
-            self.stats.invalid_fcs = self.stats.invalid_fcs.saturating_add(fcs as u64);
-            if delimiters + fcs + truncated + oversized != 0 {
-                out.diagnostics.push(PhyDiagnostic::AmpduErrors {
-                    preamble_sample_index: frame.start.sample_index,
-                    invalid_delimiters: delimiters,
-                    invalid_fcs: fcs,
-                    truncated_mpdus: truncated,
-                    oversized_mpdus: oversized,
-                });
-            }
+            let counts = ht::rx::publish_aggregate(frame, limit, out)?;
+            self.stats.valid_frames = self.stats.valid_frames.saturating_add(counts.valid_frames);
+            self.stats.invalid_fcs = self.stats.invalid_fcs.saturating_add(counts.invalid_fcs);
         } else if valid_fcs(&frame.bytes) {
             self.stats.valid_frames = self.stats.valid_frames.saturating_add(1);
             if out.frames.len() < limit {
                 out.frames.push(frame);
-            } else if self.ht_enabled {
+            } else if self.ht.strict_output_limit() {
                 return Err(RadioError::Limit {
                     context: "Wi-Fi pending frames",
                     limit: limit as u64,
@@ -288,39 +149,24 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 };
                 p.samples.push(sample);
                 if p.info.is_none() && p.samples.len() == 80 {
-                    match decode_signal(
-                        &p.samples,
-                        &p.acquisition,
-                        if self.ht_enabled {
-                            4095
-                        } else {
-                            config.max_frame_bytes.min(4095)
-                        },
-                    ) {
+                    match decode_signal(&p.samples, &p.acquisition, self.ht.signal_limit(config)) {
                         Ok(info)
-                            if (self.ht_enabled && info.rate_bps == 6_000_000
-                                || info.psdu_bytes <= config.max_frame_bytes)
-                                && (if self.ht_enabled && info.rate_bps == 6_000_000 {
-                                    160
-                                } else {
-                                    info.data_symbols * 80
-                                }) <= config.max_buffer_samples.saturating_sub(reserved) =>
+                            if self.ht.reserve_signal_candidate(
+                                &mut p.samples,
+                                info,
+                                config,
+                                config.max_buffer_samples.saturating_sub(reserved),
+                            ) =>
                         {
-                            p.samples.reserve_exact(
-                                if self.ht_enabled && info.rate_bps == 6_000_000 {
-                                    160
-                                } else {
-                                    info.data_symbols * 80
-                                },
-                            );
                             p.info = Some(info);
                         }
-                        _ if self.ht_enabled
-                            && 80 <= config.max_buffer_samples.saturating_sub(reserved) =>
+                        _ if self.ht.reserve_greenfield_probe(
+                            &mut p.samples,
+                            config.max_buffer_samples.saturating_sub(reserved),
+                        ) =>
                         {
                             // A greenfield preamble has HT-SIG here, not L-SIG.
                             // Wait for both symbols before rejecting this candidate.
-                            p.samples.reserve_exact(80);
                         }
                         _ => {
                             self.stats.rejected_frames =
@@ -331,59 +177,79 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         }
                     }
                 }
-                if self.ht_enabled && p.samples.len() == 160 {
-                    if let Some(fields) = ht::decode_iq_at(&p.samples, &p.acquisition, 0) {
-                        out.diagnostics.push(PhyDiagnostic::HtGreenfield {
-                            preamble_sample_index: p.start.sample_index,
-                        });
-                        out.diagnostics.push(PhyDiagnostic::HtSignal {
-                            fields,
-                            preamble_sample_index: p.start.sample_index,
-                        });
-                        if p.configure_ht(fields, config, reserved, true) {
+                if p.samples.len() == 160 {
+                    match self.ht.recognize_greenfield(
+                        &mut p.samples,
+                        &p.acquisition,
+                        &p.start,
+                        config,
+                        reserved,
+                    ) {
+                        ht::rx::HeaderOutcome::Supported {
+                            candidate,
+                            info,
+                            diagnostics,
+                        } => {
+                            out.diagnostics.extend(diagnostics);
+                            p.ht = Some(candidate);
+                            p.info = Some(info);
                             continue;
                         }
-                        out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
-                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
-                        self.pending[slot] = None;
-                        continue;
-                    }
-                    if p.info.is_none() {
-                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
-                        out.diagnostics.push(PhyDiagnostic::InvalidHeader);
-                        self.pending[slot] = None;
-                        continue;
-                    }
-                }
-                if p.samples.len() == 240 && p.info.is_some_and(|info| info.rate_bps == 6_000_000) {
-                    if let Some(fields) = ht::decode_iq(&p.samples[80..240], &p.acquisition) {
-                        out.diagnostics.push(PhyDiagnostic::HtSignal {
-                            fields,
-                            preamble_sample_index: p.start.sample_index,
-                        });
-                        if self.ht_enabled && p.configure_ht(fields, config, reserved, false) {
+                        ht::rx::HeaderOutcome::Unsupported { diagnostics } => {
+                            out.diagnostics.extend(diagnostics);
+                            out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                            self.stats.rejected_frames =
+                                self.stats.rejected_frames.saturating_add(1);
+                            self.pending[slot] = None;
                             continue;
                         }
-                        out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
-                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
-                        self.pending[slot] = None;
-                        continue;
-                    }
-                    if self.ht_enabled {
-                        let info = p.info.unwrap();
-                        let required = 80 + info.data_symbols * 80;
-                        if info.psdu_bytes > config.max_frame_bytes
-                            || required.saturating_sub(p.samples.capacity())
-                                > config.max_buffer_samples.saturating_sub(reserved)
-                        {
+                        ht::rx::HeaderOutcome::NotHt if p.info.is_none() => {
                             self.stats.rejected_frames =
                                 self.stats.rejected_frames.saturating_add(1);
                             out.diagnostics.push(PhyDiagnostic::InvalidHeader);
                             self.pending[slot] = None;
                             continue;
                         }
-                        p.samples
-                            .reserve_exact(required.saturating_sub(p.samples.len()));
+                        ht::rx::HeaderOutcome::NotHt => {}
+                    }
+                }
+                if p.samples.len() == 240 && p.info.is_some_and(|info| info.rate_bps == 6_000_000) {
+                    match self.ht.recognize_mixed(
+                        &mut p.samples,
+                        &p.acquisition,
+                        &p.start,
+                        config,
+                        reserved,
+                    ) {
+                        ht::rx::HeaderOutcome::Supported {
+                            candidate,
+                            info,
+                            diagnostics,
+                        } => {
+                            out.diagnostics.extend(diagnostics);
+                            p.ht = Some(candidate);
+                            p.info = Some(info);
+                            continue;
+                        }
+                        ht::rx::HeaderOutcome::Unsupported { diagnostics } => {
+                            out.diagnostics.extend(diagnostics);
+                            out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                            self.stats.rejected_frames =
+                                self.stats.rejected_frames.saturating_add(1);
+                            self.pending[slot] = None;
+                            continue;
+                        }
+                        ht::rx::HeaderOutcome::NotHt => {}
+                    }
+                    let info = p.info.unwrap();
+                    if !self
+                        .ht
+                        .reserve_legacy_fallback(&mut p.samples, info, config, reserved)
+                    {
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                        self.pending[slot] = None;
+                        continue;
                     }
                 }
                 if p.info
@@ -391,95 +257,26 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 {
                     let p = self.pending[slot].take().unwrap();
                     let info = p.info.unwrap();
-                    let (mut coding_stats, mut coding_failure) = (None, None);
-                    let mut partial_stats = Vec::new();
-                    let decoded = if let Some(fields) = p.ht {
-                        let first_end = if p.greenfield { 160 } else { 400 };
-                        // HT-ELTFs sound dimensions not used by DATA. Keep the
-                        // data-training estimates, but include every extension
-                        // field in the configured DATA position and CFO time.
-                        let data_offset = (info.data_start - p.acquisition.signal_start) as usize;
-                        let trained = if p.greenfield {
-                            Some(p.acquisition.clone())
+                    let (decoded, frame_diagnostics, failure_diagnostics, aggregate) =
+                        if let Some(candidate) = p.ht {
+                            let aggregate = candidate.aggregate();
+                            let attempt =
+                                candidate.decode(&p.samples, &p.acquisition, info, &p.start);
+                            out.diagnostics.extend(attempt.output_diagnostics);
+                            (
+                                attempt.decoded,
+                                attempt.frame_diagnostics,
+                                attempt.failure_diagnostics,
+                                aggregate,
+                            )
                         } else {
-                            ht::train_single_stream(
-                                &p.samples[320..400],
-                                p.acquisition.signal_start + 320,
-                                &p.acquisition,
+                            (
+                                decode_data(&p.samples[80..], &p.acquisition, info),
+                                Vec::new(),
+                                Vec::new(),
+                                false,
                             )
                         };
-                        trained.ok_or(()).and_then(|a| {
-                            let (a, second) = if fields.stbc == 1 {
-                                let (a, other) = ht::train_stbc_second(
-                                    a,
-                                    &p.samples[first_end..first_end + 80],
-                                    p.acquisition.signal_start + first_end as u64,
-                                )
-                                .ok_or(())?;
-                                (a, Some(other))
-                            } else {
-                                (a, None)
-                            };
-                            if let Some(layout) = p.ldpc {
-                                let (coded, tracking) = demodulate_data(
-                                    &p.samples[data_offset..],
-                                    &a,
-                                    info,
-                                    Some(if fields.short_guard_interval { 8 } else { 16 }),
-                                    false,
-                                    p.greenfield,
-                                    second.as_ref(),
-                                )?;
-                                let (bits, iterations) = if fields.aggregation {
-                                    let recovered =
-                                        layout.recover_partial(&coded, 64).map_err(|error| {
-                                            coding_failure = Some(error);
-                                        })?;
-                                    if recovered.failed_codewords != 0 {
-                                        partial_stats.push(PhyDiagnostic::LdpcPartial {
-                                            failed_codewords: recovered.failed_codewords,
-                                        });
-                                        if let Some(ldpc::rate::Error::Codeword {
-                                            index,
-                                            error:
-                                                ldpc::Error::Nonconvergence {
-                                                    iterations,
-                                                    failed_checks,
-                                                },
-                                        }) = recovered.first_failure
-                                        {
-                                            partial_stats.push(PhyDiagnostic::LdpcNonconvergence {
-                                                codeword: index,
-                                                iterations,
-                                                failed_checks,
-                                            });
-                                        }
-                                    }
-                                    (recovered.bits, recovered.iterations)
-                                } else {
-                                    layout.recover(&coded, 64).map_err(|error| {
-                                        coding_failure = Some(error);
-                                    })?
-                                };
-                                coding_stats = Some(PhyDiagnostic::Ldpc {
-                                    codewords: layout.codewords,
-                                    iterations,
-                                });
-                                return Ok((descramble_psdu(bits, info.psdu_bytes)?, tracking));
-                            }
-                            decode_data_mode_with_format(
-                                &p.samples[data_offset..],
-                                &a,
-                                info,
-                                Some(if fields.short_guard_interval { 8 } else { 16 }),
-                                p.greenfield,
-                                second.as_ref(),
-                            )
-                        })
-                    } else {
-                        decode_data(&p.samples[80..], &p.acquisition, info)
-                    };
-                    out.diagnostics.extend(partial_stats.iter().cloned());
                     match decoded {
                         Ok((bytes, tracking)) => {
                             let mut diagnostics = vec![
@@ -490,21 +287,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 },
                                 tracking,
                             ];
-                            if let Some(fields) = p.ht {
-                                diagnostics.push(PhyDiagnostic::HtSignal {
-                                    fields,
-                                    preamble_sample_index: p.start.sample_index,
-                                });
-                            }
-                            if let Some(stats) = coding_stats {
-                                diagnostics.push(stats);
-                            }
-                            diagnostics.extend(partial_stats);
-                            if p.greenfield {
-                                diagnostics.push(PhyDiagnostic::HtGreenfield {
-                                    preamble_sample_index: p.start.sample_index,
-                                });
-                            }
+                            diagnostics.extend(frame_diagnostics);
                             let frame = RecoveredFrame {
                                 bytes,
                                 link_type: LinkType::Ieee80211,
@@ -516,11 +299,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 rate_bps: info.rate_bps,
                                 diagnostics,
                             };
-                            if let Err(error) = self.publish_psdu(
-                                frame,
-                                p.ht.is_some_and(|f| f.aggregation),
-                                &mut out,
-                            ) {
+                            if let Err(error) = self.publish_psdu(frame, aggregate, &mut out) {
                                 self.reset(ResetReason::Explicit);
                                 return Err(error);
                             }
@@ -529,21 +308,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             self.stats.rejected_frames =
                                 self.stats.rejected_frames.saturating_add(1);
                             out.diagnostics.push(PhyDiagnostic::InvalidData);
-                            if let Some(ldpc::rate::Error::Codeword {
-                                index,
-                                error:
-                                    ldpc::Error::Nonconvergence {
-                                        iterations,
-                                        failed_checks,
-                                    },
-                            }) = coding_failure
-                            {
-                                out.diagnostics.push(PhyDiagnostic::LdpcNonconvergence {
-                                    codeword: index,
-                                    iterations,
-                                    failed_checks,
-                                });
-                            }
+                            out.diagnostics.extend(failure_diagnostics);
                         }
                     }
                 }
@@ -573,8 +338,6 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             samples: Vec::with_capacity(80),
                             info: None,
                             ht: None,
-                            ldpc: None,
-                            greenfield: false,
                         });
                     }
                     SyncEvent::Failure(_) => {

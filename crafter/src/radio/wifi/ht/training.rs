@@ -1,7 +1,7 @@
 //! HT20 channel training shared by HT and VHT receivers.
 
+use super::stbc;
 use crate::radio::{
-    stbc,
     wifi::ofdm::sync::{fft64, Acquisition, LONG},
     ComplexSample,
 };

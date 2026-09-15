@@ -253,7 +253,7 @@ mod tests {
     use super::*;
     #[test]
     fn radio_ldpc_independent_rate_matched_recovery() {
-        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/ldpc-rate-codewords.tsv")
+        let rows: Vec<_> = include_str!("../../../../../tests/fixtures/iq/ldpc-rate-codewords.tsv")
             .lines()
             .skip(1)
             .collect();
@@ -325,7 +325,7 @@ mod tests {
     }
     #[test]
     fn radio_ldpc_independent_rate_matching_geometry() {
-        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/ldpc-rate-index.tsv")
+        let rows: Vec<_> = include_str!("../../../../../tests/fixtures/iq/ldpc-rate-index.tsv")
             .lines()
             .skip(1)
             .collect();
