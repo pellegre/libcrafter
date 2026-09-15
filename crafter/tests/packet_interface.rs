@@ -1,5 +1,9 @@
 //! Deterministic normalized interface contracts using synthetic capture bytes.
 
+#[cfg(feature = "radio")]
+#[path = "packet_interface/fixtures.rs"]
+mod interface_fixtures;
+
 use crafter::prelude::*;
 use crafter::wire::backend::pcap::{PcapRecord, PcapTimestamp, TimestampPrecision};
 use crafter::wire::{

@@ -2104,6 +2104,8 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
     },
 ];
 
+const DOT11_REFERENCE_CORPORA: &[&str] = &["dot11/packet-interface-references.json"];
+
 const DOT11_FIXTURES: &[ValidFixtureCase] = &[
     ValidFixtureCase {
         name: "dot11-bare-data",
@@ -8719,7 +8721,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
     let base_name = match category {
         "bytes" => strip_allowed_suffix(file_name, &[".bin", ".hex"]),
         "ble" => strip_allowed_suffix(file_name, &[".hex"]),
-        "dot11" => strip_allowed_suffix(file_name, &[".hex"]),
+        "dot11" => strip_allowed_suffix(file_name, &[".hex", ".json"]),
         "dot15d4" => strip_allowed_suffix(file_name, &[".hex"]),
         "malformed" => strip_allowed_suffix(file_name, &[".bin", ".hex"]),
         "pcaps" => strip_allowed_suffix(file_name, &[".pcap", ".pcapng"]),
@@ -13142,6 +13144,7 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
         .map(|case| case.path)
         .collect::<HashSet<_>>();
     catalog_paths.extend(QUIC_SEQUENCE_FIXTURES.iter().map(|case| case.path));
+    catalog_paths.extend(DOT11_REFERENCE_CORPORA.iter().copied());
     let mut cataloged_byte_fixture_paths = HashSet::new();
 
     for file in fixture_files(&root) {
@@ -13213,6 +13216,19 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
             "catalog entry {} must live under the fixture bytes/ directory",
             case.path
         );
+    }
+
+    for path in DOT11_REFERENCE_CORPORA {
+        ensure_fixture_exists(path);
+        assert!(cataloged_byte_fixture_paths.contains(*path));
+        let corpus: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(fixture_path(path)).expect("reference corpus must be readable"),
+        )
+        .expect("reference corpus must contain valid JSON");
+        assert!(corpus["schema"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(corpus["cases"]
+            .as_array()
+            .is_some_and(|cases| !cases.is_empty()));
     }
 
     for path in cataloged_byte_fixture_paths {
