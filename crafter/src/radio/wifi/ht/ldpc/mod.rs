@@ -205,7 +205,7 @@ mod tests {
     use super::*;
     #[test]
     fn radio_ldpc_independent_codewords_and_correction() {
-        let entries: Vec<_> = include_str!("../../../tests/fixtures/iq/ldpc-codewords.tsv")
+        let entries: Vec<_> = include_str!("../../../../../tests/fixtures/iq/ldpc-codewords.tsv")
             .lines()
             .skip(1)
             .collect();

@@ -1,7 +1,7 @@
 use super::{
     error::RadioResult,
-    ht::HtSignalFields,
     transport::{Discontinuity, IqEvent, IqPosition, RxConfig, StreamEnd},
+    wifi::ht::HtSignalFields,
 };
 use crate::LinkType;
 

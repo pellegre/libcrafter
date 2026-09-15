@@ -34,7 +34,7 @@ fn radio_ht_tx_rates_cover_long_and_short_guard_intervals() {
 
 #[test]
 fn radio_ht_tx_matches_independent_bcc_waveforms() {
-    let index = include_str!("../../../../tests/fixtures/iq/ht-bcc-index.tsv");
+    let index = include_str!("../../../../../tests/fixtures/iq/ht-bcc-index.tsv");
     let mut cases = 0;
     for row in index.lines().skip(1).filter(|row| row.contains("-clean")) {
         let columns: Vec<_> = row.split('\t').collect();
@@ -68,7 +68,7 @@ fn radio_ht_tx_matches_independent_bcc_waveforms() {
 
 #[test]
 fn radio_ht_tx_matches_independent_greenfield_waveforms() {
-    let index = include_str!("../../../../tests/fixtures/iq/ht-greenfield-index.tsv");
+    let index = include_str!("../../../../../tests/fixtures/iq/ht-greenfield-index.tsv");
     let mut cases = 0;
     for row in index
         .lines()
@@ -97,7 +97,7 @@ fn radio_ht_tx_matches_independent_greenfield_waveforms() {
 
 #[test]
 fn radio_ht_tx_matches_independent_ldpc_waveforms() {
-    let index = include_str!("../../../../tests/fixtures/iq/ht-ldpc-index.tsv");
+    let index = include_str!("../../../../../tests/fixtures/iq/ht-ldpc-index.tsv");
     let mut cases = 0;
     for row in index.lines().skip(1).filter(|row| row.contains("-clean")) {
         let columns: Vec<_> = row.split('\t').collect();
@@ -127,7 +127,7 @@ fn radio_ht_tx_matches_independent_ldpc_waveforms() {
 
 #[test]
 fn radio_ht_tx_matches_independent_greenfield_ldpc_waveforms() {
-    let index = include_str!("../../../../tests/fixtures/iq/ht-greenfield-index.tsv");
+    let index = include_str!("../../../../../tests/fixtures/iq/ht-greenfield-index.tsv");
     let mut cases = 0;
     for row in index
         .lines()

@@ -1,13 +1,12 @@
 //! MAC-frame to single-stream HT20 waveform encoding.
 
+use super::super::{ldpc, HtSignalFields};
 use super::{
     waveform::{ht_data_symbol, ht_interleave, ht_signal_symbol, ht_training, puncture},
     HtCoding, HtFormat, HtGuardInterval, HtMcs, HtTxConfig,
 };
-use crate::radio::ht::HtSignalFields;
 use crate::radio::wifi::ofdm::waveform::Complex;
 use crate::radio::{
-    ldpc,
     wifi::ofdm::{waveform as ofdm, OfdmSignalFields},
     RadioError, RadioResult,
 };

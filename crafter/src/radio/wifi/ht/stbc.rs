@@ -1,9 +1,9 @@
 //! HT NSS1/NSTS2 combining, IEEE802.11-2020 Table19-18 and Equation19-27.
 //! These bounded algebra primitives establish no SIGNAL or MAC integrity.
-use super::ComplexSample;
+use crate::radio::ComplexSample;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     NonFiniteInput,
     UnobservableChannel,
     NonFiniteResult,
@@ -49,7 +49,7 @@ pub(super) fn separate_training(observed: [ComplexSample; 2]) -> Result<[Complex
 /// Recover two consecutive data symbols at one tone. Effective channels
 /// include cyclic shift/spatial mapping and must remain coherent across the
 /// pair. Received symbols must already have common phase/clock drift removed.
-pub(super) fn recover_pair(
+pub(in crate::radio) fn recover_pair(
     channels: [ComplexSample; 2],
     received: [ComplexSample; 2],
 ) -> Result<[ComplexSample; 2], Error> {
@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn radio_stbc_independent_pairs_and_training() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/stbc-pairs.tsv")
+        let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/stbc-pairs.tsv")
             .lines()
             .skip(1)
             .collect();

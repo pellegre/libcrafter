@@ -117,7 +117,7 @@ impl PhyDecoder for LegacyWifiDecoder {
         let mut ofdm_config = config.clone();
         ofdm_config.max_buffer_samples -= 128;
         ofdm_config.max_chunk_samples = 128;
-        ofdm_config.max_pending_frames = if self.ofdm.ht_enabled() {
+        ofdm_config.max_pending_frames = if self.ofdm.uses_ht() {
             config.max_pending_frames - 2
         } else {
             1
@@ -126,7 +126,7 @@ impl PhyDecoder for LegacyWifiDecoder {
         dsss_config.max_buffer_samples = 128;
         dsss_config.max_pending_frames = 1;
         for (index, samples) in chunk.cs8().chunks(256).enumerate() {
-            if self.ofdm.ht_enabled() {
+            if self.ofdm.uses_ht() {
                 self.ofdm.set_output_allowance(
                     (config.max_pending_frames - 2).saturating_sub(out.frames.len()),
                 );

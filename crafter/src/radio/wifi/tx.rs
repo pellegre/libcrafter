@@ -2,13 +2,13 @@
 
 use super::super::{
     error::{RadioError, RadioResult},
-    ht::{HtTransmission, HtTxConfig},
     packet::writer::PacketEncoder,
     transport::{EncodedSamples, OwnedSamples},
 };
 use super::dsss::{
     DsssPreamble, LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig,
 };
+use super::ht::{HtTransmission, HtTxConfig};
 use super::ofdm::{LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig};
 use crate::{wire::PacketRecord, Dot11};
 

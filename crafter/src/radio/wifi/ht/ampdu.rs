@@ -32,7 +32,7 @@ impl Delimiter {
         }
         let bits = std::array::from_fn::<_, 16, _>(|i| (bytes[i / 8] >> (i % 8)) & 1);
         // C7 is B16, the first transmitted (low) bit of the CRC octet.
-        let expected = super::ht::crc(&bits).reverse_bits();
+        let expected = super::signal::crc(&bits).reverse_bits();
         if bytes[2] != expected {
             return Err(Error::Crc {
                 expected,
@@ -134,7 +134,7 @@ impl<'a> Iterator for Scan<'a> {
         }
         let end = offset + 4 + delimiter.mpdu_bytes;
         let bytes = &self.bytes[offset + 4..end];
-        if !super::wifi::ofdm::demod::valid_fcs(bytes) {
+        if !super::super::ofdm::demod::valid_fcs(bytes) {
             return Some(Event::Invalid {
                 offset,
                 error: Error::BadFcs,
@@ -175,7 +175,7 @@ mod tests {
     }
     #[test]
     fn radio_ampdu_independent_delimiter_crc_and_fields() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/ampdu-delimiters.tsv")
+        let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/ampdu-delimiters.tsv")
             .lines()
             .skip(1)
             .collect();
@@ -208,7 +208,7 @@ mod tests {
     }
     #[test]
     fn radio_ampdu_independent_boundaries_and_resynchronization() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/ampdu-index.tsv")
+        let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/ampdu-index.tsv")
             .lines()
             .skip(1)
             .collect();

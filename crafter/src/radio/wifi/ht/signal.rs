@@ -1,13 +1,6 @@
 //! HT-SIG fields, IEEE 802.11-2020 19.3.9.4.3-4.
 //! Source and edition limitations: docs/wifi-phy-evidence.json.
 
-mod training;
-pub(in crate::radio) use training::{train_single_stream, train_stbc_second};
-mod tx;
-pub use tx::{
-    HtCoding, HtFormat, HtGuardInterval, HtMcs, HtSignalBits, HtTransmission, HtTxConfig,
-};
-
 /// Integrity-checked HT-SIG fields. This does not qualify the signaled PHY mode
 /// for reception: MCS, STBC and stream combinations need separate validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +90,7 @@ impl HtSignalFields {
         });
         let coded =
             std::array::from_fn::<_, 48, _>(|i| [deinterleaved[2 * i], deinterleaved[2 * i + 1]]);
-        Self::decode(&super::wifi::ofdm::signal::decode_bcc(&coded))
+        Self::decode(&super::super::ofdm::signal::decode_bcc(&coded))
     }
 
     /// Decode 48 binary bits in transmission order, after BCC decoding.
@@ -154,21 +147,21 @@ pub(super) fn crc(bits: &[u8]) -> u8 {
 }
 
 /// Recognize both QBPSK HT-SIG symbols using the shared legacy channel estimate.
-pub(super) fn decode_iq(
-    samples: &[super::ComplexSample],
-    acquisition: &super::wifi::ofdm::sync::Acquisition,
+pub(in crate::radio) fn decode_iq(
+    samples: &[crate::radio::ComplexSample],
+    acquisition: &super::super::ofdm::sync::Acquisition,
 ) -> Option<HtSignalFields> {
     decode_iq_at(samples, acquisition, 80)
 }
 
 /// HT-SIG follows L-SIG in mixed format, but directly follows HT-LTF1 in
 /// greenfield. All oscillator corrections retain acquisition's phase origin.
-pub(super) fn decode_iq_at(
-    samples: &[super::ComplexSample],
-    acquisition: &super::wifi::ofdm::sync::Acquisition,
+pub(in crate::radio) fn decode_iq_at(
+    samples: &[crate::radio::ComplexSample],
+    acquisition: &super::super::ofdm::sync::Acquisition,
     signal_offset: usize,
 ) -> Option<HtSignalFields> {
-    use super::{wifi::ofdm::sync::fft64, ComplexSample};
+    use crate::radio::{wifi::ofdm::sync::fft64, ComplexSample};
     if samples.len() != 160 {
         return None;
     }
@@ -244,7 +237,7 @@ mod tests {
 
     #[test]
     fn radio_ht_signal_independent_polynomial_inventory() {
-        let index = include_str!("../../../tests/fixtures/iq/ht-signal-index.tsv");
+        let index = include_str!("../../../../tests/fixtures/iq/ht-signal-index.tsv");
         assert_eq!(index.lines().skip(1).count(), 256);
         for line in index.lines().skip(1) {
             let columns: Vec<_> = line.split('\t').collect();
@@ -277,7 +270,7 @@ mod tests {
 
     #[test]
     fn radio_ht_signal_soft_bounds_scaling_and_error_correction() {
-        let row = include_str!("../../../tests/fixtures/iq/ht-signal-index.tsv")
+        let row = include_str!("../../../../tests/fixtures/iq/ht-signal-index.tsv")
             .lines()
             .nth(128)
             .unwrap();
