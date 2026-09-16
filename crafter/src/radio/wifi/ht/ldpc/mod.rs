@@ -5,7 +5,10 @@ mod encoder;
 mod matrices;
 pub(super) mod rate;
 
-use matrices::*;
+use matrices::{
+    H_1296_1_2, H_1296_2_3, H_1296_3_4, H_1296_5_6, H_1944_1_2, H_1944_2_3, H_1944_3_4, H_1944_5_6,
+    H_648_1_2, H_648_2_3, H_648_3_4, H_648_5_6,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Rate {
