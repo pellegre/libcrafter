@@ -138,29 +138,17 @@ transmitters, and transform chains.
 
 ## Packet interfaces and radio receive/transmit
 
-Libcrafter reads and writes packets through network interfaces or
-software-defined radio (SDR) sample backends. A Wi-Fi adapter converts between
-radio signals and frame bytes in its hardware. An SDR exchanges signal samples
-(I/Q) with the host, where libcrafter's Wi-Fi codec decodes and encodes the
-frames. Saved samples use the same codec offline.
+An SDR (software-defined radio) backend supplies I/Q samples. Libcrafter
+decodes them into `Packet` records and encodes packets back into I/Q samples
+for transmission. `PacketWire` exposes the backend through the usual packet
+I/O API.
 
-`PacketWire::wifi` presents both monitor adapters and SDR sample pipelines as
-bare Wi-Fi (`Dot11`) packets. Select the backend when constructing the wire;
-the same packet-processing code then handles either one.
+For Wi-Fi, select a monitor or SDR backend with `PacketWire::wifi`. Both
+provide `Dot11` packets.
 
-| Interface | What the application reads and writes | Conversion between packets and signals |
-| --- | --- | --- |
-| Ethernet | Ethernet packets | Adapter hardware handles wired signaling |
-| Managed Wi-Fi | Ethernet packets | Wi-Fi adapter hardware handles radio signaling; the OS Wi-Fi stack, driver, and firmware handle association and encryption |
-| Wi-Fi monitor mode | Bare Wi-Fi (`Dot11`) packets | Wi-Fi adapter hardware handles radio signaling; libcrafter removes capture wrappers and adds injection wrappers |
-| Wi-Fi over SDR | Bare Wi-Fi (`Dot11`) packets | SDR hardware converts between signals and I/Q samples; libcrafter's Wi-Fi codec converts between samples and frames |
-| Saved Wi-Fi I/Q samples | Bare Wi-Fi (`Dot11`) packets | Libcrafter's Wi-Fi codec processes samples offline |
-
-The runnable [wifi_interface example](crafter/examples/wifi_interface.rs)
-constructs a backend with `let backend = offline_backend(&mode)?;`. Choose
-`monitor` or `radio`; both are synthetic, in-memory demonstrations with no
-device access. This exact shared function then receives, annotates, inspects,
-and writes the typed records:
+The [wifi_interface example](crafter/examples/wifi_interface.rs) runs this
+packet-processing loop with either backend. It generates its input locally
+and runs without hardware:
 
 ```rust
 use crafter::prelude::*;
@@ -186,41 +174,18 @@ cargo run -p crafter --features radio --example wifi_interface -- monitor
 cargo run -p crafter --features radio --example wifi_interface -- radio
 ```
 
-Live operation is explicit: `WifiBackend::Monitor` opens an externally prepared
-monitor interface. `WifiBackend::RadioAdapters` accepts an SDR backend's sample
-source and sink. The built-in HackRF backend, `WifiBackend::HackRf { rx, tx }`,
-uses explicit native device settings and finite capture/transmit bounds.
-The common configuration selects channel, 20 MHz width, directions, and
-transmit format. It does not tune a monitor interface or establish a managed
-connection. Unsupported settings fail explicitly. HackRF is half-duplex:
-sending interrupts receiving, and the next receive period has a new continuity
-epoch. Successful local submission is not proof that another device received
-a packet.
+For a live monitor interface, use `WifiBackend::Monitor` after configuring the
+interface and its channel. For SDR input and output, use
+`WifiBackend::RadioAdapters` with a sample source and sink.
+`WifiBackend::HackRf { rx, tx }` opens the included HackRF backend.
 
-The optional `radio` feature provides offline sample replay/generation, legacy
-Wi-Fi, and Wi-Fi 4 on 20 MHz channels (HT20); `radio-hackrf` enables the included
-HackRF device backend and requires libhackrf. Additional SDR backends implement
-`IqSource` and `IqSink<OwnedSamples>` with the codec's required sample format,
-sample rate, and channel bandwidth. Sample transport is separate from protocol
-encoding and decoding, so devices and codecs can be extended independently.
-This is an extension contract, not an implemented Bluetooth or Wi-Fi 5–7 decoder.
+The `radio` feature supports legacy Wi-Fi and Wi-Fi 4 on 20 MHz channels
+(HT20), including sample replay and generation. `radio-hackrf` enables the
+native HackRF backend and requires libhackrf.
 
-Both Wi-Fi backends preserve original capture bytes and available timing,
-integrity, and radio metadata. The same existing `WpaDecrypt` transform works
-above either backend when supplied the required keys and handshake evidence;
-its current scope is WPA2-Personal with CCMP-128 encryption, not a new Wi-Fi
-connection or encryption stack.
-
-Independent waveform fixtures cover the supported legacy and HT20 algorithms.
-Live checks through the shared interface additionally verified three complete
-15-case legacy and 48-case HT20 transmit matrices, controlled legacy and HT20
-reception of monitor transmissions, three scoped receive comparisons, and
-saved-sample replay. That evidence does **not** establish every HT20 receive
-mode, lossless continuous capture, or sustained real-time processing. Wider
-channels and Wi-Fi 5–7 are outside this implementation. See the
-[interface reference](docs/reference/wire.md#interchangeable-packet-interfaces)
-and [measured radio scope](docs/radio.md#shared-interface-qualification) for
-configuration, report meanings, exact coverage, and remaining limits.
+See the [interface reference](docs/reference/wire.md#interchangeable-packet-interfaces)
+for configuration and status APIs, and the [radio guide](docs/radio.md) for
+sample codecs, device setup, and validation results.
 
 ## Send and receive
 
