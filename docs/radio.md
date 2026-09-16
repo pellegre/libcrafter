@@ -1,19 +1,14 @@
 # Wi-Fi IQ receive and transmit
 
-The optional `radio` feature converts Wi-Fi signal samples (I/Q) into ordinary
-libcrafter packets and encodes packets back into samples for transmission. A
-software-defined radio (SDR) device receives or transmits the signal and
-exchanges samples with the host. Libcrafter's Wi-Fi codec performs the software
-decoding and encoding independently of the device backend. Saved samples and
-in-memory backends support offline replay and generation without hardware.
+The `radio` feature decodes I/Q samples from an SDR backend into `Packet`
+records and encodes packets back into samples for transmission. The Wi-Fi
+codec runs independently of the backend, which can also read saved samples
+or store generated samples in memory.
 
 The codec supports legacy OFDM, DSSS/CCK, and 20 MHz Wi-Fi 4 (HT20). Encoded
 waveforms use signed interleaved 8-bit I/Q (CS8) at a 20 Msps source clock.
-The current built-in SDR backend is HackRF, enabled by `radio-hackrf` for
-explicit bounded reception and transmission. Other SDR devices need a backend
-that implements the sample interfaces and meets the codec's sample-format,
-sample-rate, and channel-bandwidth requirements. Live qualification evidence
-for the implemented backend is described below.
+The `radio-hackrf` feature enables the included HackRF backend. Additional SDR
+backends implement the sample interfaces described below.
 
 For applications switching between a monitor interface and SDR or saved-sample
 Wi-Fi, use `PacketWire::wifi(backend, config)` and the same typed packet
@@ -23,10 +18,9 @@ the offline [`wifi_interface`](../crafter/examples/wifi_interface.rs) example.
 
 ## Boundary and scope
 
-IQ sources supply owned sample chunks to a stateful PHY decoder. Reconstructed
-MAC bytes enter the existing packet decoder and `PacketSource` surface. IQ is
-never a `Raw` packet layer. Original recovered bytes remain available even when
-the parsed packet is later modified. RF context coexists with Wi-Fi metadata.
+Sample sources supply owned I/Q chunks to a PHY decoder. `RadioPacketSource`
+parses recovered frame bytes into typed packets for `Sniffer`. Each
+`PacketRecord` also retains the recovered bytes and RF metadata.
 
 `IqSource` supplies `IqEvent` values to a `PhyDecoder`. The provided
 `ReaderIqSource` reads signed interleaved 8-bit I/Q. `WifiDecoder` combines
@@ -44,26 +38,19 @@ implement `IqSource` without changing the PHY decoder or packet parser.
 
 The reverse direction uses `PacketEncoder` to produce `EncodedSamples`, then
 an SDR or offline `IqSink` to store or emit them. `OwnedSamples` contains CS8
-data and its sample rate, not Wi-Fi-specific MAC fields.
-`WifiPacketEncoder::Legacy` and `Ht20` implement the same contract. A synthetic
-non-Wi-Fi codec test exercises the same sample source, sink, and packet I/O
-traits; it demonstrates the extension boundary, not an additional production
-protocol. `IqSinkOutcome` reports complex-sample units and local completion
-separately from `WriteReport`'s packet-byte counts. Neither proves peer reception.
+data and its sample rate. `WifiPacketEncoder::Legacy` and `Ht20` encode the
+supported Wi-Fi formats. `IqSinkOutcome` reports sample counts and device
+completion; `WriteReport` reports packet-byte counts.
 
 Supported legacy modes are OFDM with 20 MHz channel spacing (including ERP-OFDM)
 and DSSS/CCK at 1, 2, 5.5 and 11 Mbps. Long preambles support all four
 DSSS/CCK rates; short preambles support 2, 5.5 and 11 Mbps. HT20 reception
-supports MCS 0–7, BCC and LDPC, mixed and greenfield formats, valid 400/800 ns
-guard intervals, nonaggregated PSDUs, A-MPDUs, one-data-stream STBC, and
-extension training. Additional data streams, HT40, VHT, HE, EHT, DSSS-OFDM,
-PBCC, and reduced-clock OFDM remain unsupported by this decoder. A valid legacy
-SIGNAL alone does not prove a legacy frame because HT mixed format shares its
-preamble; signaling and DATA integrity must also pass. The radio layer's job is
-to recover raw MAC bytes. Association, rate control, and other Wi-Fi state
-machines are separate surfaces. Radiotap monitor injection and native
+supports one data stream with MCS 0–7, BCC and LDPC, mixed and greenfield
+formats, valid 400/800 ns guard intervals, nonaggregated PSDUs, A-MPDUs,
+one-data-stream STBC, and extension training. Radiotap monitor injection and
 packet-to-IQ transmission are backend implementations behind the same Wi-Fi
-packet interface; the lower-level APIs below remain available.
+packet interface. The lower-level APIs below expose the individual encoding
+and sample I/O steps.
 
 ## Packet-shaped IQ transmission
 
@@ -98,8 +85,7 @@ MCS 0–7 with BCC or LDPC; mixed format with 400 or 800 ns guard intervals; and
 greenfield format with its valid 800 ns guard interval. HT20 transmission is
 single-stream. Every mode produces signed, interleaved 8-bit I/Q
 (`I0,Q0,I1,Q1,...`) at exactly 20,000,000 complex samples per second. One
-complex sample therefore occupies two bytes. Literal WAV/RIFF files, HT40,
-VHT/HE/EHT, DSSS-OFDM, PBCC, and reduced-clock PHYs are outside this surface.
+complex sample occupies two bytes. Output files contain these raw CS8 samples.
 
 `WifiFcsPolicy::Auto` appends a derived IEEE 802.11 FCS. `Explicit([u8; 4])`
 places those four bytes on the wire unchanged, including an intentionally bad

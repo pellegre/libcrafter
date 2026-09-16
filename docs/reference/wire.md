@@ -46,36 +46,29 @@ native shared owner, while `HackRfOpened { duplex }` reuses an existing one.
 After construction, all paths use the same `PacketSource`, `PacketWriter`,
 `Sniffer`, `Transmitter`, and `PacketTransform` contracts. The runnable
 [`wifi_interface`](../../crafter/examples/wifi_interface.rs) example uses one
-receive/annotate/transmit function for two offline backends; its README excerpt
-is checked against the compiled source.
+receive/annotate/transmit function for two offline backends.
 
 `WifiInterfaceConfig` specifies center frequency, optional channel number,
 20 MHz width, `WifiDirections`, and `WifiPhy` transmit selection. The PHY
 selection supports the legacy rates and single-stream HT20 matrix documented
 in [radio.md](../radio.md). Receive uses the combined decoder independently
-of the selected transmit rate. This configuration does not prepare or retune a
-monitor interface. Driver injection support, association, privileges, and
-actual channel preparation remain external. `radio_encoder` optionally carries
-complete IQ encoder settings; monitor drivers cannot represent those settings
-and return an explicit unsupported-capability error. A `MonitorAdapters`
+of the selected transmit rate. Configure the monitor interface and channel
+through the operating system before opening the backend. `radio_encoder`
+optionally carries complete IQ encoder settings; monitor drivers return an
+unsupported-capability error for those settings. A `MonitorAdapters`
 `radiotap_override` preserves explicit driver header values verbatim.
 
 Inspect `wire.descriptor()` before consuming the wire. Its optional
 `packet_format` distinguishes Ethernet, bare `Dot11`, and unnormalized capture
 formats, while `receive` and `transmit` report the opened directions.
 `wifi_descriptor()` additionally separates requested channel settings from
-observed settings. Unknown observations remain `None`; an accepted request is
-not a hardware measurement. An unknown duplex capability is not evidence that
-simultaneous radio operation is possible.
+observed settings. Unavailable observations are `None`.
 
 `PacketWire::managed_wifi_interface(name).open()` and
 `PacketWire::ethernet_interface(name).open()` use the existing pcap backend and
-require an Ethernet link format. Managed mode is a caller-declared description,
-not proof of association. The kernel handles the managed Wi-Fi connection and
-its encryption; application records are Ethernet packets. These constructors
-do not convert Ethernet packets into bare Wi-Fi frames, and a HackRF backend
-does not supply a managed connection stack. The packet-format distinction is
-intentional even though all modes share the same packet I/O traits.
+exchange Ethernet packets. Configure the managed Wi-Fi connection through the
+operating system's Wi-Fi stack. Monitor and SDR backends expose bare Wi-Fi
+frames through the same packet I/O traits.
 
 Retain `wire.wifi_control()` before `split()` to inspect record counts, terminal
 receive/transmit errors, cancellation, and (with `radio`) decoder statistics.
@@ -83,8 +76,8 @@ Native `native_status()` additionally exposes device direction, discontinuities,
 and completion evidence. A shared HackRF owner is half-duplex: a write stops
 reception first; later reception starts a new epoch rather than joining samples
 across the interruption. Cancellation is shared by source and writer, and
-native stop errors remain inspectable. Monitor cancellation does not promise
-to interrupt a currently blocking external driver read immediately.
+native stop errors remain inspectable. A blocking external driver read can
+delay monitor cancellation.
 
 ## Packet Records
 
@@ -114,41 +107,36 @@ captured lengths, and `pcap_link_type()` remain capture provenance.
 `link_type()` describes the normalized packet. `wifi_capture()` retains the
 original wrapper (including unknown fields), removed padding, trailer bytes,
 computed FCS validity, and any known driver failure/decryption indication.
-An absent or unknown FCS is not valid, and the protected bit alone does not
-prove hardware decryption. Invalid/truncated evidence stays inspectable;
-normalization itself is not an integrity acceptance filter.
+Normalization preserves reported integrity failures in the metadata.
 
 Radio records similarly preserve original recovered bytes, sample coordinates,
 continuity, and `RadioReceiveMetadata` separately from parsed packet bytes.
 Wi-Fi annotations and existing WPA transform results survive normalization and
 reannotation. `Dot11Metadata` followed by the existing `WpaDecrypt` can therefore
 consume either normalized Wi-Fi backend with the same configured credentials
-and sufficient handshake records. Backend substitution does not supply missing
-keys or expand supported ciphers.
+and sufficient handshake records.
 
 ### Write reports and units
 
 `WriteReport::bytes_requested()` and `bytes_written()` count bytes in the
-backend's packet representation, not samples and not peer-delivered bytes.
+backend's packet representation.
 A monitor report can include its radiotap injection wrapper; a radio writer
 reports compiled packet bytes, with sample delivery recorded separately.
-`is_dry_run()` identifies planned/offline output where the backend knows it;
-do not infer device completion from a full byte count.
+`is_dry_run()` identifies planned/offline output where the backend knows it.
 
 With `radio`, `radio_outcome()` returns optional `IqSinkOutcome` evidence:
 requested/supplied complex samples (one I/Q pair per sample), additional
 transport padding, known live/offline state, and `SampleCompletion`.
 `Stored` means in-memory storage, `DeviceCompleted` means local native
 completion, and `Unconfirmed` preserves a legacy sink's lack of completion
-evidence. `Incomplete` and `Cancelled` are not success. Even device completion
-does not prove over-the-air reception; that requires an independent receiver.
+information. The radio writer returns an error for `Incomplete` and `Cancelled`.
 
 ### Compatibility and custom adapters
 
 Existing raw `pcap_file` / `pcap_interface` constructors retain their capture
 representation. Normalization is opt-in through the Wi-Fi factory,
-`normalized_wifi_pcap_record`, or `NormalizedWifiSource`; do not remove
-radiotap twice. Existing `WifiTxEncoder` implementations remain usable through
+`normalized_wifi_pcap_record`, or `NormalizedWifiSource`.
+Existing `WifiTxEncoder` implementations remain usable through
 the `PacketEncoder` adapter. Existing `IqSink::write` implementations inherit
 unconfirmed completion unless they implement `write_outcome`.
 
