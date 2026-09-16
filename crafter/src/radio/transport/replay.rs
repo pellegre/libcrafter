@@ -1,6 +1,10 @@
 //! Incremental offline cs8 replay. Timing comes only from supplied metadata.
 use super::super::error::{RadioError, RadioResult};
-use super::source::*;
+use super::source::{
+    Discontinuity, IqChunk, IqEvent, IqPosition, IqSource, RxConfig, SampleLoss, StreamEnd,
+};
+#[cfg(test)]
+use super::source::{GapReason, IqContinuity, TimeAnchor};
 use std::io::{Cursor, Read};
 #[cfg(test)]
 use std::time::{Duration, SystemTime};

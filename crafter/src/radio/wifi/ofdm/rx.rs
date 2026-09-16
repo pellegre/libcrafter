@@ -1,14 +1,29 @@
 //! Legacy OFDM streaming coordination with optional HT receive delegation.
 use super::{
     demod::{decode_data, valid_fcs},
-    signal::decode_signal,
+    signal::{decode_signal, SignalInfo},
     sync::{Acquisition, SyncEvent, Synchronizer},
 };
-use crate::radio::{wifi::ht, *};
+use crate::radio::{
+    codec::{
+        DecodeOutput, FrameFraming, FrameIntegrity, PhyDecoder, PhyDiagnostic, RecoveredFrame,
+        ResetReason,
+    },
+    error::{RadioError, RadioResult},
+    transport::{
+        ComplexSample, Discontinuity, GapReason, IqContinuity, IqEvent, IqPosition, SampleLoss,
+    },
+    wifi::ht,
+};
 use crate::LinkType;
 
 #[cfg(test)]
 use super::demod::decode_data_mode;
+#[cfg(test)]
+use crate::radio::{
+    transport::{IqChunk, RxConfig, StreamEnd},
+    wifi::{HtSignalFields, WifiDecoder},
+};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DecoderStats {

@@ -1,8 +1,8 @@
-//! Bounded sample transport and packet codec contracts.
+//! Radio sample transport, packet adapters, Wi-Fi PHYs, and optional HackRF I/O.
 //!
-//! Sources transfer owned interleaved signed eight-bit I/Q storage. DSP consumes
-//! normalized samples lazily: each component is divided by 128, giving [-1, 1).
-//! IQ is never a packet layer; recovered frames cross the typed packet boundary.
+//! IQ transport and codec contracts stay separate from typed packet adapters.
+//! Wi-Fi owns PHY behavior, while HackRF only implements bounded sample transport.
+//! This module is the compatibility facade over those private subsystems.
 mod codec;
 mod error;
 #[cfg(any(feature = "radio-hackrf", test))]
