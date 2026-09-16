@@ -1,11 +1,21 @@
 # Wi-Fi IQ receive and transmit
 
-The optional `radio` feature decodes legacy OFDM, DSSS/CCK, and 20 MHz Wi-Fi 4
-(HT20) IQ into ordinary libcrafter packets. It also encodes bare typed Wi-Fi
-packets as owned CS8 waveforms at a 20 Msps source clock. It supports offline
-replay and generation without hardware; `radio-hackrf` adds explicit bounded
-native reception and transmission. Live qualification evidence is described
-below. For applications switching between a monitor interface and sample-based
+The optional `radio` feature converts Wi-Fi signal samples (I/Q) into ordinary
+libcrafter packets and encodes packets back into samples for transmission. A
+software-defined radio (SDR) device receives or transmits the signal and
+exchanges samples with the host. Libcrafter's Wi-Fi codec performs the software
+decoding and encoding independently of the device backend. Saved samples and
+in-memory backends support offline replay and generation without hardware.
+
+The codec supports legacy OFDM, DSSS/CCK, and 20 MHz Wi-Fi 4 (HT20). Encoded
+waveforms use signed interleaved 8-bit I/Q (CS8) at a 20 Msps source clock.
+The current built-in SDR backend is HackRF, enabled by `radio-hackrf` for
+explicit bounded reception and transmission. Other SDR devices need a backend
+that implements the sample interfaces and meets the codec's sample-format,
+sample-rate, and channel-bandwidth requirements. Live qualification evidence
+for the implemented backend is described below.
+
+For applications switching between a monitor interface and SDR or saved-sample
 Wi-Fi, use `PacketWire::wifi(backend, config)` and the same typed packet
 receive/transform/transmit pipeline. See the
 [interface contract](reference/wire.md#interchangeable-packet-interfaces) and
@@ -29,17 +39,17 @@ Each reconstructs FCS-valid `RecoveredFrame` values.
 only the declared trailer from parser input. Wi-Fi decoders publish verified
 four-byte FCS trailers; other codecs need not use that framing. `PacketRecord`
 retains the original recovered bytes and `RadioReceiveMetadata`; Wi-Fi
-annotations remain available independently. Sources can implement `IqSource`
-without changing the PHY decoder or packet parser.
+annotations remain available independently. Additional SDR receive backends
+implement `IqSource` without changing the PHY decoder or packet parser.
 
 The reverse direction uses `PacketEncoder` to produce `EncodedSamples`, then
-`IqSink` to store or emit them. `OwnedSamples` contains CS8 data and its sample
-rate, not Wi-Fi-specific MAC fields. `WifiPacketEncoder::Legacy` and `Ht20`
-implement the same contract. A synthetic non-Wi-Fi codec test exercises the
-same sample source, sink, and packet I/O traits; it demonstrates the extension
-boundary, not an additional production protocol. `IqSinkOutcome` reports
-complex-sample units and local completion separately from `WriteReport`'s
-packet-byte counts. Neither proves peer reception.
+an SDR or offline `IqSink` to store or emit them. `OwnedSamples` contains CS8
+data and its sample rate, not Wi-Fi-specific MAC fields.
+`WifiPacketEncoder::Legacy` and `Ht20` implement the same contract. A synthetic
+non-Wi-Fi codec test exercises the same sample source, sink, and packet I/O
+traits; it demonstrates the extension boundary, not an additional production
+protocol. `IqSinkOutcome` reports complex-sample units and local completion
+separately from `WriteReport`'s packet-byte counts. Neither proves peer reception.
 
 Supported legacy modes are OFDM with 20 MHz channel spacing (including ERP-OFDM)
 and DSSS/CCK at 1, 2, 5.5 and 11 Mbps. Long preambles support all four

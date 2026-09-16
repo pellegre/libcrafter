@@ -138,17 +138,23 @@ transmitters, and transform chains.
 
 ## Packet interfaces and radio receive/transmit
 
-Radio is a core packet-I/O capability: receive wave samples, decode them into
-typed `Packet` records, or encode those same packets for transmission.
-`PacketWire` also handles kernel network interfaces. A Wi-Fi monitor adapter
-and the HackRF radio pipeline present the same bare Wi-Fi frames, so selecting
-the backend changes one construction point, not the packet-processing code.
+Libcrafter reads and writes packets through network interfaces or
+software-defined radio (SDR) sample backends. A Wi-Fi adapter converts between
+radio signals and frame bytes in its hardware. An SDR exchanges signal samples
+(I/Q) with the host, where libcrafter's Wi-Fi codec decodes and encodes the
+frames. Saved samples use the same codec offline.
 
-| Interface | What the application reads and writes | Who handles the radio |
+`PacketWire::wifi` presents both monitor adapters and SDR sample pipelines as
+bare Wi-Fi (`Dot11`) packets. Select the backend when constructing the wire;
+the same packet-processing code then handles either one.
+
+| Interface | What the application reads and writes | Conversion between packets and signals |
 | --- | --- | --- |
-| Ethernet or managed Wi-Fi | Ethernet packets | Kernel/driver; managed Wi-Fi association and encryption stay there |
-| Wi-Fi monitor mode | Bare Wi-Fi (`Dot11`) packets | Kernel/driver; the backend handles capture/injection wrappers |
-| Wi-Fi over HackRF or saved samples | Bare Wi-Fi (`Dot11`) packets | A sample device plus libcrafter's Wi-Fi codec |
+| Ethernet | Ethernet packets | Adapter hardware handles wired signaling |
+| Managed Wi-Fi | Ethernet packets | Wi-Fi adapter hardware handles radio signaling; the OS Wi-Fi stack, driver, and firmware handle association and encryption |
+| Wi-Fi monitor mode | Bare Wi-Fi (`Dot11`) packets | Wi-Fi adapter hardware handles radio signaling; libcrafter removes capture wrappers and adds injection wrappers |
+| Wi-Fi over SDR | Bare Wi-Fi (`Dot11`) packets | SDR hardware converts between signals and I/Q samples; libcrafter's Wi-Fi codec converts between samples and frames |
+| Saved Wi-Fi I/Q samples | Bare Wi-Fi (`Dot11`) packets | Libcrafter's Wi-Fi codec processes samples offline |
 
 The runnable [wifi_interface example](crafter/examples/wifi_interface.rs)
 constructs a backend with `let backend = offline_backend(&mode)?;`. Choose
@@ -181,19 +187,23 @@ cargo run -p crafter --features radio --example wifi_interface -- radio
 ```
 
 Live operation is explicit: `WifiBackend::Monitor` opens an externally prepared
-monitor interface; `WifiBackend::HackRf { rx, tx }` uses explicit native device
-settings and finite capture/transmit bounds. The common configuration selects
-channel, 20 MHz width, directions, and transmit format. It does not tune a
-monitor interface or establish a managed connection. Unsupported settings fail
-explicitly. HackRF is half-duplex: sending interrupts receiving, and the next
-receive period has a new continuity epoch. Successful local submission is not
-proof that another device received a packet.
+monitor interface. `WifiBackend::RadioAdapters` accepts an SDR backend's sample
+source and sink. The built-in HackRF backend, `WifiBackend::HackRf { rx, tx }`,
+uses explicit native device settings and finite capture/transmit bounds.
+The common configuration selects channel, 20 MHz width, directions, and
+transmit format. It does not tune a monitor interface or establish a managed
+connection. Unsupported settings fail explicitly. HackRF is half-duplex:
+sending interrupts receiving, and the next receive period has a new continuity
+epoch. Successful local submission is not proof that another device received
+a packet.
 
 The optional `radio` feature provides offline sample replay/generation, legacy
-Wi-Fi, and Wi-Fi 4 on 20 MHz channels (HT20); `radio-hackrf` adds native device
-I/O and requires libhackrf. The sample source/sink is separate from the protocol
-decoder/encoder, so another codec need not modify the device layer. This is an
-extension contract, not an implemented Bluetooth or Wi-Fi 5–7 decoder.
+Wi-Fi, and Wi-Fi 4 on 20 MHz channels (HT20); `radio-hackrf` enables the included
+HackRF device backend and requires libhackrf. Additional SDR backends implement
+`IqSource` and `IqSink<OwnedSamples>` with the codec's required sample format,
+sample rate, and channel bandwidth. Sample transport is separate from protocol
+encoding and decoding, so devices and codecs can be extended independently.
+This is an extension contract, not an implemented Bluetooth or Wi-Fi 5–7 decoder.
 
 Both Wi-Fi backends preserve original capture bytes and available timing,
 integrity, and radio metadata. The same existing `WpaDecrypt` transform works
@@ -342,7 +352,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | Layer | Coverage | Guide |
 | --- | --- | --- |
 | Ethernet / VLAN | Ethernet II and 802.1Q VLAN, Linux cooked capture, null/loopback | — |
-| IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields; interchangeable monitor/radio packet interfaces; optional legacy and Wi-Fi 4 HT20 sample decoding/encoding and bounded HackRF receive/transmit | [dot11](docs/guide/dot11.md), [radio](docs/radio.md) |
+| IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields; interchangeable monitor/SDR packet interfaces; optional legacy and Wi-Fi 4 HT20 sample decoding/encoding with SDR and offline sample backends | [dot11](docs/guide/dot11.md), [radio](docs/radio.md) |
 | ARP | Request/reply construction and decode | [arp](docs/guide/arp.md) |
 | IPv4 | DSCP/ECN, protocol labels, checksum status, typed options, fragment fields (no automatic reassembly) | [ipv4](docs/guide/ipv4.md) |
 | IGMP | IPv4 packet-layer membership queries/reports, IGMPv1/v2 compatibility, IGMPv3 query/report records, generic extensions, and multicast router discovery packet shapes; not a router, snooper, proxy, or scanner | [igmp](docs/guide/igmp.md) |
