@@ -4,13 +4,12 @@
 //! explicit caller-supplied inputs and fixed vectors, but it never implies
 //! ownership of TLS session state or a complete QUIC endpoint.
 
-use aes::cipher::{BlockEncrypt, KeyInit as AesKeyInit};
+use aes::cipher::{BlockCipherEncrypt, KeyInit as AesKeyInit};
 use aes::Aes128;
 use aes_gcm::aead::{consts::U12 as AesGcmU12, Aead, Payload};
-use aes_gcm::{Aes128Gcm, KeyInit as AesGcmKeyInit, Nonce as AesGcmNonce};
+use aes_gcm::{Aes128Gcm, Nonce as AesGcmNonce};
 use chacha20::cipher::{KeyIvInit as ChaChaKeyIvInit, StreamCipher, StreamCipherSeek};
 use chacha20::ChaCha20;
-use cipher::generic_array::GenericArray;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
@@ -765,8 +764,8 @@ pub fn quic_aes128_header_protection_mask(
         sample.as_ref(),
         "quic.crypto.header_protection.sample",
     )?;
-    let cipher = Aes128::new(GenericArray::from_slice(&key));
-    let mut block = GenericArray::clone_from_slice(&sample);
+    let cipher = Aes128::new((&key).into());
+    let mut block = sample.into();
     cipher.encrypt_block(&mut block);
     let mut mask = [0u8; QUIC_HEADER_PROTECTION_MASK_LEN];
     mask.copy_from_slice(&block[..QUIC_HEADER_PROTECTION_MASK_LEN]);

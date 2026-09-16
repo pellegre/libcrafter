@@ -10,7 +10,7 @@ use core::fmt;
 
 use aes::Aes128;
 use ccm::{
-    aead::{generic_array::GenericArray, AeadInPlace, KeyInit as AeadKeyInit},
+    aead::{AeadInOut, KeyInit as AeadKeyInit},
     consts::{U13, U8},
     Ccm,
 };
@@ -1231,8 +1231,14 @@ pub fn protect_oscore(
                 "Sender Key length differs from the selected AEAD key length",
             )
         })?;
+    let nonce = ccm::Nonce::<U13>::try_from(nonce.as_slice()).map_err(|_| {
+        OscoreError::invalid_field_value(
+            "coap.oscore.nonce",
+            "nonce length differs from the selected AEAD nonce length",
+        )
+    })?;
     let tag = cipher
-        .encrypt_in_place_detached(GenericArray::from_slice(&nonce), &aad, &mut plaintext)
+        .encrypt_inout_detached(&nonce, &aad, plaintext.as_mut_slice().into())
         .map_err(|_| {
             OscoreError::invalid_field_value("coap.oscore.ciphertext", "AEAD encryption failed")
         })?;
@@ -1389,7 +1395,11 @@ pub fn unprotect_oscore(
     let aad = context.cose_encrypt0_aad(&request_kid, &request_partial_iv, class_i_options)?;
     let split_at = payload.len() - tag_len;
     let mut plaintext = payload[..split_at].to_vec();
-    let tag = GenericArray::from_slice(&payload[split_at..]);
+    let tag = ccm::Tag::<U8>::try_from(&payload[split_at..]).map_err(|_| {
+        OscoreError::AuthenticationFailed {
+            context: "coap.oscore.authentication",
+        }
+    })?;
     let cipher =
         <OscoreAesCcm as AeadKeyInit>::new_from_slice(context.recipient_key()).map_err(|_| {
             OscoreError::invalid_field_value(
@@ -1397,8 +1407,14 @@ pub fn unprotect_oscore(
                 "Recipient Key length differs from the selected AEAD key length",
             )
         })?;
+    let nonce = ccm::Nonce::<U13>::try_from(nonce.as_slice()).map_err(|_| {
+        OscoreError::invalid_field_value(
+            "coap.oscore.nonce",
+            "nonce length differs from the selected AEAD nonce length",
+        )
+    })?;
     cipher
-        .decrypt_in_place_detached(GenericArray::from_slice(&nonce), &aad, &mut plaintext, tag)
+        .decrypt_inout_detached(&nonce, &aad, plaintext.as_mut_slice().into(), &tag)
         .map_err(|_| OscoreError::AuthenticationFailed {
             context: "coap.oscore.authentication",
         })?;
@@ -2116,13 +2132,14 @@ mod tests {
         )
         .unwrap();
         let nonce = sender.sender_nonce(partial_iv).unwrap();
+        let nonce = ccm::Nonce::<U13>::try_from(nonce.as_slice()).unwrap();
         let aad = sender
             .cose_encrypt0_aad(sender.sender_id(), partial_iv, [])
             .unwrap();
         let cipher = <OscoreAesCcm as AeadKeyInit>::new_from_slice(sender.sender_key()).unwrap();
         let mut plaintext = vec![CoapCode::get().wire_value(), COAP_PAYLOAD_MARKER];
         let tag = cipher
-            .encrypt_in_place_detached(GenericArray::from_slice(&nonce), &aad, &mut plaintext)
+            .encrypt_inout_detached(&nonce, &aad, plaintext.as_mut_slice().into())
             .unwrap();
         plaintext.extend_from_slice(&tag);
         let protected = Coap::post()

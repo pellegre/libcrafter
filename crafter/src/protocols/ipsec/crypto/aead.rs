@@ -35,10 +35,8 @@ use aes_gcm::{
     Tag as AesGcmTag,
 };
 use ccm::consts::{U11, U8};
-use ccm::{AeadInPlace as CcmAeadInPlace, Ccm};
+use ccm::Ccm;
 use chacha20poly1305::{ChaCha20Poly1305, Nonce as ChaChaNonce, Tag as ChaChaTag};
-use cipher::generic_array::GenericArray;
-use cipher::KeyInit;
 
 use crate::{CrafterError, Result};
 
@@ -163,9 +161,11 @@ impl AeadTransform {
             }
             Self::AesCcm8 => {
                 let cipher = AesCcm8::new_from_slice(key).map_err(|_| Self::key_err(self))?;
+                let nonce =
+                    ccm::Nonce::<U11>::try_from(nonce).map_err(|_| Self::nonce_err(self))?;
                 let mut buf = plaintext.to_vec();
                 let tag = cipher
-                    .encrypt_in_place_detached(GenericArray::from_slice(nonce), aad, &mut buf)
+                    .encrypt_inout_detached(&nonce, aad, buf.as_mut_slice().into())
                     .map_err(|_| Self::seal_err(self))?;
                 Ok((buf, tag.to_vec()))
             }
@@ -214,14 +214,12 @@ impl AeadTransform {
             }
             Self::AesCcm8 => {
                 let cipher = AesCcm8::new_from_slice(key).map_err(|_| Self::key_err(self))?;
+                let nonce =
+                    ccm::Nonce::<U11>::try_from(nonce).map_err(|_| Self::nonce_err(self))?;
+                let tag = ccm::Tag::<U8>::try_from(tag).map_err(|_| Self::tag_len_err(self))?;
                 let mut buf = ciphertext.to_vec();
                 cipher
-                    .decrypt_in_place_detached(
-                        GenericArray::from_slice(nonce),
-                        aad,
-                        &mut buf,
-                        GenericArray::from_slice(tag),
-                    )
+                    .decrypt_inout_detached(&nonce, aad, buf.as_mut_slice().into(), &tag)
                     .map_err(|_| Self::integrity_err(self))?;
                 Ok(buf)
             }
@@ -495,7 +493,6 @@ mod tests {
     /// transform calls) against published CCM bytes.
     #[test]
     fn aes_ccm8_rfc3610_packet_vector1_via_ccm_crate() {
-        use ccm::aead::AeadInPlace as CcmAeadInPlace;
         use ccm::consts::{U13, U8 as CcmU8};
         use ccm::{Ccm, KeyInit as CcmKeyInit};
 
@@ -504,6 +501,7 @@ mod tests {
 
         let key = hex("c0c1c2c3c4c5c6c7c8c9cacbcccdcecf");
         let nonce = hex("00000003020100a0a1a2a3a4a5");
+        let nonce = ccm::Nonce::<U13>::try_from(nonce.as_slice()).unwrap();
         let aad = hex("0001020304050607");
         let plaintext = hex("08090a0b0c0d0e0f101112131415161718191a1b1c1d1e");
         let expected_ct = hex("588c979a61c663d2f066d0c2c0f989806d5f6b61dac384");
@@ -512,20 +510,16 @@ mod tests {
         let cipher = <AesCcm8L2 as CcmKeyInit>::new_from_slice(&key).unwrap();
         let mut buf = plaintext.clone();
         let tag = cipher
-            .encrypt_in_place_detached(GenericArray::from_slice(&nonce), &aad, &mut buf)
+            .encrypt_inout_detached(&nonce, &aad, buf.as_mut_slice().into())
             .unwrap();
         assert_eq!(buf, expected_ct);
         assert_eq!(tag.to_vec(), expected_tag);
 
         // Decrypt round-trips and verifies the tag.
         let mut dec = expected_ct.clone();
+        let tag = ccm::Tag::<CcmU8>::try_from(expected_tag.as_slice()).unwrap();
         cipher
-            .decrypt_in_place_detached(
-                GenericArray::from_slice(&nonce),
-                &aad,
-                &mut dec,
-                GenericArray::from_slice(&expected_tag),
-            )
+            .decrypt_inout_detached(&nonce, &aad, dec.as_mut_slice().into(), &tag)
             .unwrap();
         assert_eq!(dec, plaintext);
     }
