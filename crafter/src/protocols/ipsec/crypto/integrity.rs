@@ -15,10 +15,9 @@
 //! All transforms compute the full underlying MAC and then truncate to the RFC
 //! ICV length. Verification recomputes the tag and compares in constant time.
 
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockEncrypt, KeyInit as AesKeyInit};
+use aes::cipher::{BlockCipherEncrypt, KeyInit as AesKeyInit};
 use aes::Aes128;
-use aes_gcm::{AeadInOut as GcmAeadInOut, Aes128Gcm, KeyInit as GcmKeyInit, Nonce as GcmNonce};
+use aes_gcm::{AeadInOut as GcmAeadInOut, Aes128Gcm, Nonce as GcmNonce};
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
@@ -169,20 +168,19 @@ fn hmac_sha512(key: &[u8], message: &[u8], icv_len: usize) -> Result<Vec<u8>> {
 
 /// AES-XCBC-MAC (RFC 3566 §4): the full 16-octet MAC, before ICV truncation.
 fn aes_xcbc_mac(key: &[u8], message: &[u8]) -> Result<[u8; AES_BLOCK_LEN]> {
-    if key.len() != AES_BLOCK_LEN {
-        return Err(CrafterError::invalid_field_value(
+    let cipher = Aes128::new_from_slice(key).map_err(|_| {
+        CrafterError::invalid_field_value(
             "ipsec.integrity.aes_xcbc.key",
             "AES-XCBC-MAC requires a 16-octet AES-128 key",
-        ));
-    }
+        )
+    })?;
 
     // Derive the three subkeys K1, K2, K3 from the master key (RFC 3566 §4).
-    let cipher = Aes128::new(GenericArray::from_slice(key));
     let k1 = aes_encrypt_block(&cipher, &[0x01; AES_BLOCK_LEN]);
     let k2 = aes_encrypt_block(&cipher, &[0x02; AES_BLOCK_LEN]);
     let k3 = aes_encrypt_block(&cipher, &[0x03; AES_BLOCK_LEN]);
 
-    let k1_cipher = Aes128::new(GenericArray::from_slice(&k1));
+    let k1_cipher = Aes128::new((&k1).into());
 
     // RFC 3566 §4: process all but the final block, XOR-chaining through K1.
     let mut e = [0u8; AES_BLOCK_LEN];
@@ -233,7 +231,7 @@ fn aes_xcbc_mac(key: &[u8], message: &[u8]) -> Result<[u8; AES_BLOCK_LEN]> {
 
 /// Encrypt a single 16-octet block with an AES cipher.
 fn aes_encrypt_block(cipher: &Aes128, block: &[u8; AES_BLOCK_LEN]) -> [u8; AES_BLOCK_LEN] {
-    let mut buf = GenericArray::clone_from_slice(block);
+    let mut buf = (*block).into();
     cipher.encrypt_block(&mut buf);
     let mut out = [0u8; AES_BLOCK_LEN];
     out.copy_from_slice(&buf);

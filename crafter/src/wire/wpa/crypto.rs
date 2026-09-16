@@ -7,8 +7,8 @@
 use core::fmt;
 
 #[cfg(test)]
-use aes::cipher::BlockEncrypt;
-use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit as AesKeyInit};
+use aes::cipher::BlockCipherEncrypt;
+use aes::cipher::{BlockCipherDecrypt, KeyInit as AesKeyInit};
 use aes::Aes128;
 use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2;
@@ -252,7 +252,7 @@ pub(crate) fn unwrap_key_data(
         })
         .collect();
 
-    let cipher = Aes128::new(GenericArray::from_slice(kek));
+    let cipher = Aes128::new(kek.into());
     for j in (0..AES_KEY_WRAP_ROUNDS).rev() {
         for i in (1..=n).rev() {
             let t = (n * j + i) as u64;
@@ -391,7 +391,7 @@ fn wpa2_eapol_mic(
 }
 
 fn aes_decrypt_block(cipher: &Aes128, block: [u8; AES_BLOCK_LEN]) -> [u8; AES_BLOCK_LEN] {
-    let mut block = aes::cipher::Block::<Aes128>::clone_from_slice(&block);
+    let mut block = aes::cipher::Block::<Aes128>::from(block);
     cipher.decrypt_block(&mut block);
 
     let mut out = [0u8; AES_BLOCK_LEN];
@@ -401,7 +401,7 @@ fn aes_decrypt_block(cipher: &Aes128, block: [u8; AES_BLOCK_LEN]) -> [u8; AES_BL
 
 #[cfg(test)]
 fn aes_encrypt_block(cipher: &Aes128, block: [u8; AES_BLOCK_LEN]) -> [u8; AES_BLOCK_LEN] {
-    let mut block = aes::cipher::Block::<Aes128>::clone_from_slice(&block);
+    let mut block = aes::cipher::Block::<Aes128>::from(block);
     cipher.encrypt_block(&mut block);
 
     let mut out = [0u8; AES_BLOCK_LEN];

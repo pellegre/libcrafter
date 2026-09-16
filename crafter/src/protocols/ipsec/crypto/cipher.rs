@@ -21,7 +21,7 @@
 
 use aes::Aes128;
 use cipher::block_padding::NoPadding;
-use cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, StreamCipher};
+use cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit, StreamCipher};
 
 use crate::{CrafterError, Result};
 
@@ -148,8 +148,11 @@ fn aes_cbc_encrypt(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
     let len = buf.len();
     // NoPadding over an exact-block buffer is infallible; the only error paths
     // (unpadded length / undersized buffer) are guarded above.
-    let ct = AesCbcEnc::new(key.into(), iv.into())
-        .encrypt_padded_mut::<NoPadding>(&mut buf, len)
+    let ct = AesCbcEnc::new_from_slices(key, iv)
+        .map_err(|_| {
+            CrafterError::invalid_field_value("ipsec.cipher.aes_cbc", "invalid AES-CBC key or IV")
+        })?
+        .encrypt_padded::<NoPadding>(&mut buf, len)
         .map_err(|_| {
             CrafterError::invalid_field_value("ipsec.cipher.aes_cbc", "AES-CBC encryption failed")
         })?;
@@ -168,8 +171,11 @@ fn aes_cbc_decrypt(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> 
     let mut buf = ciphertext.to_vec();
     // NoPadding decrypt does not strip anything; ESP trailer removal is the ESP
     // layer's job. This yields the raw block-aligned plaintext.
-    let pt = AesCbcDec::new(key.into(), iv.into())
-        .decrypt_padded_mut::<NoPadding>(&mut buf)
+    let pt = AesCbcDec::new_from_slices(key, iv)
+        .map_err(|_| {
+            CrafterError::invalid_field_value("ipsec.cipher.aes_cbc", "invalid AES-CBC key or IV")
+        })?
+        .decrypt_padded::<NoPadding>(&mut buf)
         .map_err(|_| {
             CrafterError::invalid_field_value("ipsec.cipher.aes_cbc", "AES-CBC decryption failed")
         })?;
@@ -207,7 +213,9 @@ fn aes_ctr_apply(key: &[u8], iv: &[u8], data: &[u8]) -> Result<Vec<u8>> {
     counter[AES_BLOCK_LEN - 4..].copy_from_slice(&1u32.to_be_bytes());
 
     let mut buf = data.to_vec();
-    let mut ctr = AesCtr::new(aes_key.into(), (&counter).into());
+    let mut ctr = AesCtr::new_from_slices(aes_key, &counter).map_err(|_| {
+        CrafterError::invalid_field_value("ipsec.cipher.aes_ctr", "invalid AES-CTR key or counter")
+    })?;
     ctr.apply_keystream(&mut buf);
     Ok(buf)
 }
