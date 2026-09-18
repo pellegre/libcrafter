@@ -98,6 +98,7 @@ pub(in crate::radio) struct Acquisition {
     pub frequency_rad: f32,
     pub coarse_frequency_rad: f32,
     pub channel: [ComplexSample; 64],
+    pub iq_balance: [f32; 2],
     pub correlation: f32,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -398,7 +399,21 @@ impl Synchronizer {
         for (k, sign) in [(36, 1.), (37, 1.), (27, -1.), (28, -1.)] {
             channel[k] = bins[k].scale(sign);
         }
+        // Repeated known training estimates quadrature gain and leakage after
+        // the same carrier correction used for subsequent symbols.
+        let (mut ei, mut eq, mut cross) = (0f64, 0f64, 0f64);
+        for sample in first.iter().chain(second.iter()) {
+            ei += f64::from(sample.i).powi(2);
+            eq += f64::from(sample.q).powi(2);
+            cross += f64::from(sample.i) * f64::from(sample.q);
+        }
+        let iq_balance = if ei > 1e-12 && eq > 1e-12 {
+            [(ei / eq).sqrt() as f32, (cross / ei) as f32]
+        } else {
+            [1., 0.]
+        };
         Some(Acquisition {
+            iq_balance,
             preamble_start,
             signal_start: index + 1,
             phase_origin: first_index,

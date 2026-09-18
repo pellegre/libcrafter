@@ -447,6 +447,74 @@ fn radio_weak_training_exact_frame_recovery() {
 }
 
 #[test]
+fn radio_iq_balance_exact_frame_recovery() {
+    use crafter::radio::*;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    let mut matrix = std::collections::BTreeSet::new();
+    for line in include_str!("fixtures/iq/ofdm-iq-balance-index.tsv")
+        .lines()
+        .skip(1)
+    {
+        let c: Vec<_> = line.split('\t').collect();
+        assert_eq!(c.len(), 8);
+        assert!(matrix.insert((c[1], c[2], c[3])));
+        let bytes = fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+        let source = fs::read(root.join(format!("{}.cs8", c[1]))).unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[5]);
+        assert_eq!(hex(&Sha256::digest(&source)), c[4]);
+        assert_eq!(bytes.len(), 2 * c[6].parse::<usize>().unwrap());
+        let gain: f64 = c[2].parse().unwrap();
+        let leakage: f64 = c[3].parse().unwrap();
+        for (actual, original) in bytes.chunks_exact(2).zip(source.chunks_exact(2)) {
+            let i = f64::from(original[0] as i8);
+            let q = f64::from(original[1] as i8);
+            assert_eq!(actual[0] as i8, (0.5 * i).round_ties_even() as i8);
+            assert_eq!(
+                actual[1] as i8,
+                (0.5 * (q / gain + leakage * i)).round_ties_even() as i8
+            );
+        }
+        for chunk in [1, 127, 65536] {
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: chunk,
+                max_buffer_samples: 262_144,
+                max_frame_bytes: 4095,
+                max_pending_frames: 4,
+                max_capture_samples: 200_000,
+                max_duration: std::time::Duration::from_secs(1),
+            };
+            let position = IqPosition {
+                epoch: 7,
+                sequence: 0,
+                sample_index: 1_000_000,
+                time_anchor: None,
+                discontinuity: None,
+            };
+            let mut source =
+                ReaderIqSource::new(std::io::Cursor::new(&bytes), config, position).unwrap();
+            let mut decoder = WifiDecoder::new();
+            let mut frames = Vec::new();
+            loop {
+                let event = source.next_event().unwrap();
+                let end = matches!(event, IqEvent::End(_));
+                frames.extend(decoder.consume(event).unwrap().frames);
+                if end {
+                    break;
+                }
+            }
+            assert_eq!(frames.len(), 1, "{} chunk={chunk}", c[0]);
+            assert_eq!(hex(&frames[0].bytes), c[7], "{} chunk={chunk}", c[0]);
+            assert_eq!(frames[0].integrity, FrameIntegrity::ValidFcs);
+            assert_eq!(frames[0].start.epoch, 7);
+            assert_eq!(frames[0].start.sample_index, 1_000_037);
+        }
+    }
+    assert_eq!(matrix.len(), 64);
+}
+
+#[test]
 fn radio_ht_data_decision_recovery_preserves_bytes_and_coordinates() {
     check_ht_impairment_matrix("ht-decision-index.tsv", 100, &[-1, 1], &[16]);
 }

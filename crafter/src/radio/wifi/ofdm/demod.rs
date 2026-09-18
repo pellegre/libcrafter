@@ -168,6 +168,37 @@ pub(in crate::radio) fn decode_data_profile(
     Ok((recover_bcc(&coded, info)?, tracking))
 }
 
+// Q correction mixes each FFT bin with its conjugate mirror. Apply the
+// same transform to the known-training observations and the DATA samples.
+fn balanced_channel(a: &Acquisition, ht: bool) -> Acquisition {
+    let sign = |k: usize| {
+        let carrier = if k < 32 { k as i32 } else { k as i32 - 64 };
+        match carrier {
+            -26..=26 => super::sync::LONG[(carrier + 26) as usize] as f32,
+            -28 | -27 if ht => 1.,
+            27 | 28 if ht => -1.,
+            _ => 0.,
+        }
+    };
+    let [gain, leakage] = a.iq_balance;
+    let alpha = ComplexSample {
+        i: (1. + gain) / 2.,
+        q: -gain * leakage / 2.,
+    };
+    let beta = ComplexSample {
+        i: (1. - gain) / 2.,
+        q: -gain * leakage / 2.,
+    };
+    let mut corrected = a.clone();
+    corrected.channel = std::array::from_fn(|k| {
+        let other = (64 - k) % 64;
+        let value = a.channel[k].scale(sign(k));
+        let mirror = a.channel[other].scale(sign(other)).conj();
+        alpha.mul(value).add(beta.mul(mirror)).scale(sign(k))
+    });
+    corrected
+}
+
 pub(in crate::radio) fn demodulate_data_profile(
     samples: &[ComplexSample],
     a: &Acquisition,
@@ -178,6 +209,17 @@ pub(in crate::radio) fn demodulate_data_profile(
     stbc_second: Option<&[ComplexSample; 64]>,
     profile: Profile,
 ) -> Result<(Vec<f32>, PhyDiagnostic), ()> {
+    if profile.correct_iq && stbc_second.is_some() {
+        return Err(());
+    }
+    let balanced;
+    let apply_iq = profile.correct_iq && stbc_second.is_none();
+    let a = if apply_iq {
+        balanced = balanced_channel(a, ht_guard.is_some());
+        &balanced
+    } else {
+        a
+    };
     let guard = ht_guard.unwrap_or(16);
     let stride = 64 + guard;
     let carriers = if ht_guard.is_some() { 52 } else { 48 };
@@ -226,10 +268,18 @@ pub(in crate::radio) fn demodulate_data_profile(
             (nominal as isize - advance).clamp(0, (samples.len() - 64) as isize) as usize;
         let actual_advance = nominal as isize - window_start as isize;
         let time = std::array::from_fn(|n| {
-            samples[window_start + n].mul(ComplexSample::rotation(
+            let sample = samples[window_start + n].mul(ComplexSample::rotation(
                 -a.frequency_rad
                     * (info.data_start + (window_start + n) as u64 - a.phase_origin) as f32,
-            ))
+            ));
+            if apply_iq {
+                ComplexSample {
+                    i: sample.i,
+                    q: (sample.q - a.iq_balance[1] * sample.i) * a.iq_balance[0],
+                }
+            } else {
+                sample
+            }
         });
         let shifted = fft64(time);
         // Undo the known integer window shift before pilot fitting, so its

@@ -514,6 +514,7 @@ mod tests {
                 coarse_frequency_rad: 0.,
                 channel: [ComplexSample::ZERO; 64],
                 correlation: 1.,
+                iq_balance: [1., 0.],
             };
             let a = ht::train_single_stream(
                 &samples[data_start - 80..data_start],
