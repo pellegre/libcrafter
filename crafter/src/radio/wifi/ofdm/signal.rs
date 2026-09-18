@@ -125,6 +125,10 @@ fn viterbi(coded: &[f32; 48]) -> [u8; 24] {
 
 /// Shared bounded rate-1/2 BCC traceback. Callers validate finite soft metrics.
 pub(in crate::radio) fn decode_bcc<const N: usize>(coded: &[[f32; 2]; N]) -> [u8; N] {
+    decode_bcc_end(coded, false)
+}
+
+fn decode_bcc_end<const N: usize>(coded: &[[f32; 2]; N], terminated: bool) -> [u8; N] {
     let mut metric = [f32::INFINITY; 64];
     metric[0] = 0.;
     let mut history = [[0u8; 64]; N];
@@ -144,9 +148,13 @@ pub(in crate::radio) fn decode_bcc<const N: usize>(coded: &[[f32; 2]; N]) -> [u8
         }
         metric = next;
     }
-    let mut state = (0..64)
-        .min_by(|a, b| metric[*a].total_cmp(&metric[*b]))
-        .unwrap();
+    let mut state = if terminated {
+        0
+    } else {
+        (0..64)
+            .min_by(|a, b| metric[*a].total_cmp(&metric[*b]))
+            .unwrap()
+    };
     let mut bits = [0; N];
     for t in (0..N).rev() {
         bits[t] = (state & 1) as u8;
@@ -160,26 +168,55 @@ pub(super) fn decode_signal(
     acquisition: &Acquisition,
     max_bytes: usize,
 ) -> Result<SignalInfo, SignalError> {
+    let original = decode_signal_profile(samples, acquisition, max_bytes, 0, false);
+    if original.is_ok() {
+        return original;
+    }
+    // L-SIG ends in six zero TAIL bits. Constrain only this fallback;
+    // other header formats keep their own traceback and integrity checks.
+    for advance in [0, 8] {
+        if let Ok(info) = decode_signal_profile(samples, acquisition, max_bytes, advance, true) {
+            return Ok(info);
+        }
+    }
+    original
+}
+
+fn decode_signal_profile(
+    samples: &[ComplexSample],
+    acquisition: &Acquisition,
+    max_bytes: usize,
+    advance: usize,
+    terminated: bool,
+) -> Result<SignalInfo, SignalError> {
     if samples.len() < 80 {
         return Err(SignalError::Truncated {
             required: 80,
             available: samples.len(),
         });
     }
+    let prefix = 16 - advance;
     let mut time = [ComplexSample::ZERO; 64];
     for n in 0..64 {
         let index = acquisition
             .signal_start
-            .checked_add(16 + n as u64)
+            .checked_add((prefix + n) as u64)
             .ok_or(SignalError::SampleOverflow)?;
         let elapsed = index
             .checked_sub(acquisition.phase_origin)
             .ok_or(SignalError::SampleOverflow)?;
-        time[n] = samples[16 + n].mul(ComplexSample::rotation(
+        time[n] = samples[prefix + n].mul(ComplexSample::rotation(
             -acquisition.frequency_rad * elapsed as f32,
         ));
     }
-    let bins = fft64(time);
+    let mut bins = fft64(time);
+    if advance != 0 {
+        for (k, bin) in bins.iter_mut().enumerate() {
+            *bin = bin.mul(ComplexSample::rotation(
+                std::f32::consts::TAU * advance as f32 * k as f32 / 64.,
+            ));
+        }
+    }
     // SIGNAL pilot polarity index zero: +,+,+,-, ascending signed carrier.
     let mut pilot = ComplexSample::ZERO;
     for (k, sign) in [(43, 1.), (57, 1.), (7, 1.), (21, -1.)] {
@@ -204,7 +241,15 @@ pub(super) fn decode_signal(
     }
     // Equations 17-15/16 with NCBPS=48, s=1 (second permutation identity).
     let coded = std::array::from_fn(|k| interleaved[3 * (k % 16) + k / 16]);
-    parse_bits(&viterbi(&coded), max_bytes, acquisition.signal_start)
+    let bits = if terminated {
+        decode_bcc_end::<24>(
+            &std::array::from_fn(|i| [coded[2 * i], coded[2 * i + 1]]),
+            true,
+        )
+    } else {
+        viterbi(&coded)
+    };
+    parse_bits(&bits, max_bytes, acquisition.signal_start)
 }
 
 #[cfg(test)]
@@ -250,6 +295,18 @@ mod tests {
             let expected_length = 59 + ordinal;
             let (samples, a) = fixture(&format!("{rate}-clean"));
             let info = decode_signal(&samples[a.signal_start as usize..], &a, 4095).unwrap();
+            for advance in [0, 8] {
+                assert_eq!(
+                    decode_signal_profile(
+                        &samples[a.signal_start as usize..],
+                        &a,
+                        4095,
+                        advance,
+                        true
+                    ),
+                    Ok(info)
+                );
+            }
             assert_eq!(info.rate_bps, rate * 1_000_000);
             assert_eq!(info.psdu_bytes, expected_length);
             assert_eq!(info.data_bits_per_symbol, ndbps);
@@ -330,6 +387,26 @@ mod tests {
             Err(SignalError::UnusableChannel)
         );
     }
+    #[test]
+    fn radio_signal_terminated_traceback_recovers_damaged_tail_observations() {
+        let published = b"111010111010000101101100110101011100000000000000";
+        let mut coded: [[f32; 2]; 24] = std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                if published[2 * i + j] == b'1' {
+                    1.
+                } else {
+                    -1.
+                }
+            })
+        });
+        coded[18..].fill([0.; 2]);
+        coded[23] = [1.; 2];
+        assert_ne!(decode_bcc(&coded), bits());
+        let recovered = decode_bcc_end(&coded, true);
+        assert_eq!(recovered, bits());
+        assert!(parse_bits(&recovered, 4095, 0).is_ok());
+    }
+
     #[test]
     fn radio_signal_independent_coded_bits_and_error_correction() {
         let published = "111010111010000101101100110101011100000000000000";
