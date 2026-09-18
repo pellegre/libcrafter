@@ -37,6 +37,9 @@ behaviors:
     checks: [repeated_legacy_training_noise, adjacent_ht_training_noise, consistent_iq_correction, regularized_equalizer, independent_ht_bcc_matrix, both_guard_intervals, exact_psdu, valid_fcs]
   - name: progressive-pilot-tracking
     checks: [unit_weight_pilot_phase_fit, initialized_slope_innovation, accumulated_clock_drift, independent_ht_bcc_matrix, both_guard_intervals, carrier_offset, multipath, exact_psdu, valid_fcs]
+  - name: training-window-recovery
+    rates_mbps: [6, 9, 12, 18, 24, 36, 48, 54]
+    checks: [independent_ltf_suffix_noise, untouched_signal_and_data, retained_earlier_training_windows, consistent_fft_phase_reference, exact_psdu, valid_fcs, original_coordinates, chunk_invariance]
   - name: integrity-aided-recovery
     checks: [bounded_attempts, retain_original_valid_psdu, retain_valid_aggregate_members, no_overlapping_member_replacement, original_order_and_coordinates, inspectable_retries, no_invalid_delivery]
 coverage_cases: [wifi-ofdm-tracking-quality]

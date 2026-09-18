@@ -100,6 +100,7 @@ pub(in crate::radio) struct Acquisition {
     pub channel: [ComplexSample; 64],
     pub iq_balance: [f32; 2],
     pub noise_power: [f32; 2],
+    pub early_channel: [[ComplexSample; 64]; 3],
     pub correlation: f32,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -431,7 +432,35 @@ impl Synchronizer {
                 .sum::<f32>()
                 / 104.
         });
+        // Retain earlier cyclic training windows without moving packet coordinates.
+        // DATA retries use the same phase origin and undo the known FFT shift.
+        let early_channel = std::array::from_fn(|choice| {
+            let advance = [2, 4, 8][choice];
+            if self.count < 128 + advance {
+                return channel;
+            }
+            let early_bins = fft64(std::array::from_fn(|n| {
+                let first = self.ago(127 + advance - n).mul(ComplexSample::rotation(
+                    -frequency * (n as f32 - advance as f32),
+                ));
+                let second = self.ago(63 + advance - n).mul(ComplexSample::rotation(
+                    -frequency * (n as f32 + 64. - advance as f32),
+                ));
+                first.add(second).scale(0.5)
+            }));
+            let mut shifted = [ComplexSample::ZERO; 64];
+            for (i, sign) in LONG.iter().enumerate() {
+                let k = (i as i32 - 26).rem_euclid(64) as usize;
+                shifted[k] = early_bins[k]
+                    .mul(ComplexSample::rotation(
+                        TAU * advance as f32 * k as f32 / 64.,
+                    ))
+                    .scale(*sign as f32);
+            }
+            shifted
+        });
         Some(Acquisition {
+            early_channel,
             noise_power,
             iq_balance,
             preamble_start,

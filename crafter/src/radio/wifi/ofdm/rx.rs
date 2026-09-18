@@ -516,6 +516,7 @@ mod tests {
                 correlation: 1.,
                 iq_balance: [1., 0.],
                 noise_power: [0.; 2],
+                early_channel: [[ComplexSample::ZERO; 64]; 3],
             };
             let a = ht::train_single_stream(
                 &samples[data_start - 80..data_start],
@@ -536,15 +537,15 @@ mod tests {
                 .unwrap_or_else(|_| panic!("{} DATA rejected", c[0]));
             assert_eq!(actual, expected, "{}", c[0]);
             assert!(valid_fcs(&actual), "{}", c[0]);
-            for (guard_quarters, common_phase, decision_iterations, mmse, progressive_pilots) in [
-                (2, false, 0, false, false),
+            for (guard_eighths, common_phase, decision_iterations, mmse, progressive_pilots) in [
+                (4, false, 0, false, false),
+                (4, false, 3, false, false),
+                (2, true, 0, false, false),
                 (2, false, 3, false, false),
-                (1, true, 0, false, false),
-                (1, false, 3, false, false),
-                (3, true, 0, false, false),
-                (3, false, 3, false, false),
-                (2, false, 0, true, false),
-                (2, false, 0, false, true),
+                (6, true, 0, false, false),
+                (6, false, 3, false, false),
+                (4, false, 0, true, false),
+                (4, false, 0, false, true),
             ] {
                 let profile = crate::radio::wifi::recovery::Profile {
                     boundary_metrics: true,
@@ -552,7 +553,7 @@ mod tests {
                     correct_iq: mmse || progressive_pilots,
                     progressive_pilots,
                     track_timing: !progressive_pilots,
-                    guard_quarters,
+                    guard_eighths,
                     common_phase,
                     decision_iterations,
                     ..crate::radio::wifi::recovery::Profile::TRACKED
