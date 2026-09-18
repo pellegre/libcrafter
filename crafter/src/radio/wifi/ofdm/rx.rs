@@ -515,6 +515,7 @@ mod tests {
                 channel: [ComplexSample::ZERO; 64],
                 correlation: 1.,
                 iq_balance: [1., 0.],
+                noise_power: [0.; 2],
             };
             let a = ht::train_single_stream(
                 &samples[data_start - 80..data_start],
@@ -535,16 +536,19 @@ mod tests {
                 .unwrap_or_else(|_| panic!("{} DATA rejected", c[0]));
             assert_eq!(actual, expected, "{}", c[0]);
             assert!(valid_fcs(&actual), "{}", c[0]);
-            for (guard_quarters, common_phase, decision_iterations) in [
-                (2, false, 0),
-                (2, false, 3),
-                (1, true, 0),
-                (1, false, 3),
-                (3, true, 0),
-                (3, false, 3),
+            for (guard_quarters, common_phase, decision_iterations, mmse) in [
+                (2, false, 0, false),
+                (2, false, 3, false),
+                (1, true, 0, false),
+                (1, false, 3, false),
+                (3, true, 0, false),
+                (3, false, 3, false),
+                (2, false, 0, true),
             ] {
                 let profile = crate::radio::wifi::recovery::Profile {
                     boundary_metrics: true,
+                    mmse,
+                    correct_iq: mmse,
                     guard_quarters,
                     common_phase,
                     decision_iterations,
