@@ -534,6 +534,25 @@ mod tests {
                 .unwrap_or_else(|_| panic!("{} DATA rejected", c[0]));
             assert_eq!(actual, expected, "{}", c[0]);
             assert!(valid_fcs(&actual), "{}", c[0]);
+            for decision_iterations in [0, 3] {
+                let profile = crate::radio::wifi::recovery::Profile {
+                    boundary_metrics: true,
+                    decision_iterations,
+                    ..crate::radio::wifi::recovery::Profile::TRACKED
+                };
+                let (actual, _) = super::super::demod::decode_data_profile(
+                    &samples[data_start..end],
+                    &a,
+                    info,
+                    Some(guard),
+                    false,
+                    None,
+                    profile,
+                )
+                .unwrap_or_else(|_| panic!("{} equalized DATA rejected", c[0]));
+                assert_eq!(actual, expected, "{}", c[0]);
+                assert!(valid_fcs(&actual), "{}", c[0]);
+            }
         }
     }
     fn config() -> RxConfig {
