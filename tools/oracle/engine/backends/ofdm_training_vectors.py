@@ -25,7 +25,7 @@ def generate(out):
             if not c[0].endswith(suffix):
                 continue
             source = (OUT / (c[0] + '.cs8')).read_bytes()
-            for impairment in ['stf32', 'stf40', 'ltf']:
+            for impairment in ['stf32', 'stf40', 'ltf', 'ltf_weak', 'ltf_dc']:
                 raw = bytearray(source)
                 rng = random.Random(137)
                 if impairment.startswith('stf'):
@@ -36,12 +36,17 @@ def generate(out):
                 else:
                     start = 37 + 192
                     signed = [v if v < 128 else v - 256 for v in source]
+                    if impairment == 'ltf_dc':
+                        signed = [round(v * .5) for v in signed]
+                        raw = bytearray(v & 255 for v in signed)
                     training = [complex(*signed[2*n:2*n+2]) for n in range(start, start+64)]
+                    if impairment == 'ltf_dc':
+                        training = [v + 20 for v in training]
                     noise = [complex(rng.uniform(-1, 1), rng.uniform(-1, 1)) for _ in training]
                     energy = sum(abs(v)**2 for v in training)
                     projection = sum(v.conjugate()*n for v, n in zip(training, noise))/energy
                     noise = [n-projection*v for v, n in zip(training, noise)]
-                    scale = math.sqrt(.22*energy/sum(abs(n)**2 for n in noise))
+                    scale = math.sqrt((.4 if impairment == 'ltf_weak' else .22)*energy/sum(abs(n)**2 for n in noise))
                     noise = [complex(round(n.real*scale), round(n.imag*scale)) for n in noise]
                     for sign, offset in [(1, 0), (-1, 64)]:
                         for n, (value, error) in enumerate(zip(training, noise)):
@@ -53,7 +58,7 @@ def generate(out):
                 (out / (name + '.cs8')).write_bytes(raw)
                 rows.append('\t'.join(map(str, [name, c[0], impairment, hashlib.sha256(source).hexdigest(),
                                                hashlib.sha256(raw).hexdigest(), len(raw)//2, c[column]])))
-    assert len(rows) == 49
+    assert len(rows) == 81
     (out / 'ofdm-training-index.tsv').write_text('\n'.join(rows) + '\n')
 
 
@@ -69,4 +74,4 @@ if __name__ == '__main__':
                 assert file.read_bytes() == (OUT / file.name).read_bytes(), file.name
     else:
         generate(OUT)
-    print('48 independent OFDM training-impairment fixtures verified')
+    print('80 independent OFDM training-impairment fixtures verified')
