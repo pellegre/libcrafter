@@ -40,6 +40,73 @@ fn demap(value: f32, width: usize, scale: f32, weight: f32, out: &mut Vec<f32>) 
         out.push((distance[0] - distance[1]) * weight);
     }
 }
+// Confidence in a nearest constellation coordinate decreases at decision
+// boundaries. Ambiguous DATA tones contribute less to the phase estimate.
+fn nearest_axis(value: f32, width: usize, scale: f32) -> (f32, f32) {
+    let mut best = (f32::INFINITY, 0.);
+    let mut second = f32::INFINITY;
+    for label in 0..1 << width {
+        let point = axis(label, width) / scale;
+        let distance = (value - point).powi(2);
+        if distance < best.0 {
+            second = best.0;
+            best = (distance, point);
+        } else {
+            second = second.min(distance);
+        }
+    }
+    (best.1, (second - best.0) / (second + 1e-12))
+}
+
+fn refine_data_phase(
+    bins: &[ComplexSample; 64],
+    channel: &[ComplexSample; 64],
+    edge: i32,
+    nbpsc: usize,
+    scale: f32,
+    iterations: u8,
+    mut phase: f32,
+    mut slope: f32,
+) -> (f32, f32) {
+    for _ in 0..iterations {
+        let (mut w, mut x, mut xx, mut y, mut xy) = (0., 0., 0., 0., 0.);
+        for k in (-edge..=edge).filter(|k| ![-21, -7, 0, 7, 21].contains(k)) {
+            let bin = k.rem_euclid(64) as usize;
+            let power = channel[bin].power();
+            if !power.is_finite() || power < 1e-12 {
+                continue;
+            }
+            let value = bins[bin]
+                .mul(channel[bin].conj())
+                .scale(1. / power)
+                .mul(ComplexSample::rotation(-phase - slope * k as f32));
+            let width = if nbpsc == 1 { 1 } else { nbpsc / 2 };
+            let (i, ci) = nearest_axis(value.i, width, scale);
+            let (q, cq) = if nbpsc == 1 {
+                (0., 1.)
+            } else {
+                nearest_axis(value.q, width, scale)
+            };
+            let point = ComplexSample { i, q };
+            let error = value.mul(point.conj()).phase();
+            let weight = power * point.power() * ci.min(cq);
+            let carrier = k as f32;
+            w += weight;
+            x += weight * carrier;
+            xx += weight * carrier * carrier;
+            y += weight * error;
+            xy += weight * carrier * error;
+        }
+        let determinant = w * xx - x * x;
+        if determinant.is_finite() && determinant > 1e-12 {
+            let delta = (w * xy - x * y) / determinant;
+            phase += (y - delta * x) / w;
+            slope += delta;
+        }
+    }
+    (phase, slope)
+}
+
 pub(super) fn decode_data(
     samples: &[ComplexSample],
     a: &Acquisition,
@@ -222,17 +289,33 @@ pub(in crate::radio) fn demodulate_data_profile(
             residual_energy += weight * error * error;
             residual_weight += weight;
         }
+        // DATA decisions refine only this symbol's correction. Pilot-derived
+        // clock tracking remains independent, avoiding decision-error drift.
+        let (intercept, data_slope) = if stbc_second.is_none() {
+            refine_data_phase(
+                &bins,
+                &a.channel,
+                edge,
+                nbpsc,
+                scale.sqrt(),
+                profile.decision_iterations,
+                intercept,
+                phase_slope,
+            )
+        } else {
+            (intercept, phase_slope)
+        };
         if stbc_second.is_some() && symbol % 2 == 0 {
             for k in (-edge..=edge).filter(|k| ![-21, -7, 0, 7, 21].contains(k)) {
                 preceding[k.rem_euclid(64) as usize] = bins[k.rem_euclid(64) as usize]
-                    .mul(ComplexSample::rotation(-intercept - phase_slope * k as f32));
+                    .mul(ComplexSample::rotation(-intercept - data_slope * k as f32));
             }
             continue;
         }
         let mut interleaved = Vec::with_capacity(info.coded_bits_per_symbol);
         let mut companion = stbc_second.map(|_| Vec::with_capacity(info.coded_bits_per_symbol));
         for k in (-edge..=edge).filter(|k| ![-21, -7, 0, 7, 21].contains(k)) {
-            let rotation = ComplexSample::rotation(-intercept - phase_slope * k as f32);
+            let rotation = ComplexSample::rotation(-intercept - data_slope * k as f32);
             let k = k.rem_euclid(64) as usize;
             let power = a.channel[k].power() + stbc_second.map_or(0., |second| second[k].power());
             if !power.is_finite() || power < 1e-12 {

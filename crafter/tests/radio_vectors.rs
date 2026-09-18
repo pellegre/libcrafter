@@ -280,15 +280,20 @@ fn radio_sampling_clock_exact_frame_recovery() {
 
 #[test]
 fn radio_ht_sampling_clock_recovery_preserves_bytes_and_coordinates() {
-    check_ht_impairment_matrix("ht-clock-index.tsv", 4095, &[-80, 80]);
+    check_ht_impairment_matrix("ht-clock-index.tsv", 4095, &[-80, 80], &[8, 16]);
 }
 
 #[test]
 fn radio_ht_pilot_noise_recovery_preserves_bytes_and_coordinates() {
-    check_ht_impairment_matrix("ht-pilot-index.tsv", 100, &[-1, 1]);
+    check_ht_impairment_matrix("ht-pilot-index.tsv", 100, &[-1, 1], &[8, 16]);
 }
 
-fn check_ht_impairment_matrix(index_name: &str, length: usize, parameters: &[i32]) {
+fn check_ht_impairment_matrix(
+    index_name: &str,
+    length: usize,
+    parameters: &[i32],
+    guards: &[usize],
+) {
     use crafter::radio::*;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
     let index = fs::read_to_string(root.join(index_name)).unwrap();
@@ -299,7 +304,7 @@ fn check_ht_impairment_matrix(index_name: &str, length: usize, parameters: &[i32
         let mcs: u8 = c[1].parse().unwrap();
         let guard: usize = c[2].parse().unwrap();
         let parameter: i32 = c[3].parse().unwrap();
-        assert!(mcs < 8 && [8, 16].contains(&guard) && parameters.contains(&parameter));
+        assert!(mcs < 8 && guards.contains(&guard) && parameters.contains(&parameter));
         assert!(matrix.insert((mcs, guard, parameter)));
         let bytes = fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
         assert_eq!(hex(&Sha256::digest(&bytes)), c[5]);
@@ -355,7 +360,7 @@ fn check_ht_impairment_matrix(index_name: &str, length: usize, parameters: &[i32
             coordinates = Some(current);
         }
     }
-    assert_eq!(matrix.len(), 32);
+    assert_eq!(matrix.len(), 8 * guards.len() * parameters.len());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
@@ -415,6 +420,11 @@ fn radio_weak_training_exact_frame_recovery() {
         }
     }
     assert_eq!(matrix.len(), 48);
+}
+
+#[test]
+fn radio_ht_data_decision_recovery_preserves_bytes_and_coordinates() {
+    check_ht_impairment_matrix("ht-decision-index.tsv", 100, &[-1, 1], &[16]);
 }
 
 fn hex(bytes: &[u8]) -> String {
