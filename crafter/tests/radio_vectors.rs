@@ -280,22 +280,34 @@ fn radio_sampling_clock_exact_frame_recovery() {
 
 #[test]
 fn radio_ht_sampling_clock_recovery_preserves_bytes_and_coordinates() {
+    check_ht_impairment_matrix("ht-clock-index.tsv", 4095, &[-80, 80]);
+}
+
+#[test]
+fn radio_ht_pilot_noise_recovery_preserves_bytes_and_coordinates() {
+    check_ht_impairment_matrix("ht-pilot-index.tsv", 100, &[-1, 1]);
+}
+
+fn check_ht_impairment_matrix(index_name: &str, length: usize, parameters: &[i32]) {
     use crafter::radio::*;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
-    let index = fs::read_to_string(root.join("ht-clock-index.tsv")).unwrap();
+    let index = fs::read_to_string(root.join(index_name)).unwrap();
     let mut matrix = std::collections::BTreeSet::new();
     let mut failures = Vec::new();
     for line in index.lines().skip(1) {
         let c: Vec<_> = line.split('\t').collect();
         let mcs: u8 = c[1].parse().unwrap();
         let guard: usize = c[2].parse().unwrap();
-        let ppm: i32 = c[3].parse().unwrap();
-        assert!(mcs < 8 && [8, 16].contains(&guard) && [-80, 80].contains(&ppm));
-        assert!(matrix.insert((mcs, guard, ppm)));
+        let parameter: i32 = c[3].parse().unwrap();
+        assert!(mcs < 8 && [8, 16].contains(&guard) && parameters.contains(&parameter));
+        assert!(matrix.insert((mcs, guard, parameter)));
         let bytes = fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
         assert_eq!(hex(&Sha256::digest(&bytes)), c[5]);
         assert_eq!(bytes.len(), 2 * c[6].parse::<usize>().unwrap());
-        let source = root.join(format!("ht-bcc-{mcs}-gi{}-len4095-clean.cs8", guard * 50));
+        let source = root.join(format!(
+            "ht-bcc-{mcs}-gi{}-len{length}-clean.cs8",
+            guard * 50
+        ));
         assert_eq!(hex(&Sha256::digest(fs::read(source).unwrap())), c[4]);
         let mut coordinates = None;
         for chunk in [127, 65536] {

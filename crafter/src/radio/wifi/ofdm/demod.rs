@@ -174,7 +174,10 @@ pub(in crate::radio) fn demodulate_data(
         if !determinant.is_finite() || determinant < 1e-12 {
             return Err(());
         }
-        let slope_delta = (w * xy - x * y) / determinant;
+        // Clock drift changes slowly between symbols. Filter the slope
+        // innovation so noise on four pilots does not rotate every DATA tone.
+        // Refit common phase for the applied slope and retain its residuals.
+        let slope_delta = 0.3 * (w * xy - x * y) / determinant;
         let intercept = reference + (y - slope_delta * x) / w;
         phase_slope += slope_delta;
         let time = (symbol * stride) as f64;

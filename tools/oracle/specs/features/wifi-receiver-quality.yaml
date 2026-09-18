@@ -13,6 +13,10 @@ behaviors:
     checks: [distinct_header_and_data_failures, no_invalid_delivery]
   - name: bcc-termination
     checks: [traceback_from_zero_at_tail_end, ignore_pad_observations, recover_psdu_with_erased_tail_observations, retain_mac_integrity_checks]
+  - name: pilot-slope-noise
+    mcs: [0, 1, 2, 3, 4, 5, 6, 7]
+    guard_interval_ns: [400, 800]
+    checks: [independent_pilot_tone_interference, both_phase_signs, exact_psdu, valid_fcs, chunk_invariance, retained_clock_tracking]
 coverage_cases: [wifi-ofdm-tracking-quality]
 supported_cases:
   - {name: wifi-ofdm-tracking-quality, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
@@ -26,3 +30,4 @@ backend_support:
       - Independent malformed SIGNAL, SERVICE and FCS fixtures distinguish rejection stages.
       - BCC traceback ends at the six zero TAIL bits, before PAD, using the known zero encoder state (IEEE 802.11-2020 17.3.5.3 and 19.3.11.1).
       - Independent coded legacy fixtures cover every OFDM rate with erased TAIL observations and contradictory PAD observations; HT uses the same BCC recovery path.
+      - Independent HT pilot-tone interference fixtures verify that per-symbol slope noise does not rotate otherwise valid DATA constellations.
