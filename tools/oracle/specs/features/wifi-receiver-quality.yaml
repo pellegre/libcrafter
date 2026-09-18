@@ -35,6 +35,8 @@ behaviors:
     checks: [independent_quadrature_gain_and_leakage, both_error_signs, training_estimate, consistent_channel_and_data_correction, exact_psdu, valid_fcs, original_coordinates, chunk_invariance]
   - name: noise-aware-equalization
     checks: [repeated_legacy_training_noise, adjacent_ht_training_noise, consistent_iq_correction, regularized_equalizer, independent_ht_bcc_matrix, both_guard_intervals, exact_psdu, valid_fcs]
+  - name: progressive-pilot-tracking
+    checks: [unit_weight_pilot_phase_fit, initialized_slope_innovation, accumulated_clock_drift, independent_ht_bcc_matrix, both_guard_intervals, carrier_offset, multipath, exact_psdu, valid_fcs]
   - name: integrity-aided-recovery
     checks: [bounded_attempts, retain_original_valid_psdu, retain_valid_aggregate_members, no_overlapping_member_replacement, original_order_and_coordinates, inspectable_retries, no_invalid_delivery]
 coverage_cases: [wifi-ofdm-tracking-quality]

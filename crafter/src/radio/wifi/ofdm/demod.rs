@@ -269,6 +269,7 @@ pub(in crate::radio) fn demodulate_data_profile(
         feedback(&mut pilot_state);
     }
     let mut phase_slope = 0.;
+    let mut slope_velocity = 0.;
     let mut preceding = [ComplexSample::ZERO; 64];
     let (mut sum_x, mut sum_xx, mut sum_y, mut sum_xy) = (0f64, 0f64, 0f64, 0f64);
     let (mut residual_energy, mut residual_weight) = (0f64, 0f64);
@@ -346,7 +347,11 @@ pub(in crate::radio) fn demodulate_data_profile(
         let reference = common.phase();
         let (mut w, mut x, mut xx, mut y, mut xy) = (0., 0., 0., 0., 0.);
         for (k, value) in pilots {
-            let weight = value.power().sqrt();
+            let weight = if profile.progressive_pilots {
+                1.
+            } else {
+                value.power().sqrt()
+            };
             let residual = value.mul(ComplexSample::rotation(-reference)).phase();
             w += weight;
             x += weight * k;
@@ -363,6 +368,14 @@ pub(in crate::radio) fn demodulate_data_profile(
         // Refit common phase for the applied slope and retain its residuals.
         let slope_delta = if profile.common_phase {
             0.
+        } else if profile.progressive_pilots {
+            let residual = (w * xy - x * y) / determinant;
+            slope_velocity = if symbol == 0 {
+                residual
+            } else {
+                profile.pilot_alpha * residual + (1. - profile.pilot_alpha) * slope_velocity
+            };
+            slope_velocity
         } else {
             profile.pilot_alpha * (w * xy - x * y) / determinant
         };
