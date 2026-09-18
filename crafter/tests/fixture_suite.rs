@@ -8599,6 +8599,11 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ht-bcc-index.tsv"
                 | "ht-clock-index.tsv"
                 | "ht-pilot-index.tsv"
+                | "ht-common-index.tsv"
+                | "ht-decision-index.tsv"
+                | "ofdm-training-index.tsv"
+                | "ofdm-iq-balance-index.tsv"
+                | "ofdm-training-window-index.tsv"
                 | "ht-greenfield-index.tsv"
                 | "ht-greenfield-invalid-index.tsv"
                 | "ht-greenfield-ampdu-index.tsv"
@@ -8633,6 +8638,31 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 .skip(1)
                 .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
                 .chain(include_str!("fixtures/iq/ht-bcc-index.tsv").lines().skip(1))
+                .chain(
+                    include_str!("fixtures/iq/ht-common-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/ht-decision-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/ofdm-training-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/ofdm-iq-balance-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/ofdm-training-window-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
                 .chain(
                     include_str!("fixtures/iq/ht-clock-index.tsv")
                         .lines()
