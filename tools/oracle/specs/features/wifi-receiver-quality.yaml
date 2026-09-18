@@ -11,6 +11,8 @@ behaviors:
     checks: [finite_pilot_phase_residual, signed_sampling_clock_estimate, symbol_count, chunk_invariance]
   - name: data-rejections
     checks: [distinct_header_and_data_failures, no_invalid_delivery]
+  - name: signal-recovery
+    checks: [retain_original_valid_header, zero_state_tail_fallback, half_guard_fft_fallback, parity_and_length_checks, independent_signal_vectors, corrupted_tail_observations, require_payload_fcs]
   - name: bcc-termination
     checks: [traceback_from_zero_at_tail_end, ignore_pad_observations, recover_psdu_with_erased_tail_observations, retain_mac_integrity_checks]
   - name: pilot-slope-noise
