@@ -534,9 +534,18 @@ mod tests {
                 .unwrap_or_else(|_| panic!("{} DATA rejected", c[0]));
             assert_eq!(actual, expected, "{}", c[0]);
             assert!(valid_fcs(&actual), "{}", c[0]);
-            for decision_iterations in [0, 3] {
+            for (guard_quarters, common_phase, decision_iterations) in [
+                (2, false, 0),
+                (2, false, 3),
+                (1, true, 0),
+                (1, false, 3),
+                (3, true, 0),
+                (3, false, 3),
+            ] {
                 let profile = crate::radio::wifi::recovery::Profile {
                     boundary_metrics: true,
+                    guard_quarters,
+                    common_phase,
                     decision_iterations,
                     ..crate::radio::wifi::recovery::Profile::TRACKED
                 };
