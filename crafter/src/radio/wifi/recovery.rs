@@ -10,6 +10,7 @@ pub(in crate::radio) struct Profile {
     pub decision_iterations: u8,
     /// Equalized pilot sum and boundary-distance metrics without clock fitting.
     pub common_phase: bool,
+    pub boundary_metrics: bool,
 }
 
 impl Profile {
@@ -18,25 +19,29 @@ impl Profile {
         pilot_alpha: 0.3,
         decision_iterations: 0,
         common_phase: false,
+        boundary_metrics: false,
     };
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 11] = [
         Self {
             track_timing: false,
             pilot_alpha: 1.,
             decision_iterations: 0,
             common_phase: false,
+            boundary_metrics: false,
         },
         Self {
             track_timing: true,
             pilot_alpha: 1.,
             decision_iterations: 0,
             common_phase: false,
+            boundary_metrics: false,
         },
         Self {
             track_timing: false,
             pilot_alpha: 0.3,
             decision_iterations: 0,
             common_phase: false,
+            boundary_metrics: false,
         },
         Self::TRACKED,
         Self {
@@ -49,15 +54,27 @@ impl Profile {
         },
         Self {
             common_phase: true,
+            boundary_metrics: true,
             ..Self::TRACKED
         },
         Self {
             common_phase: true,
+            boundary_metrics: true,
             track_timing: false,
             ..Self::TRACKED
         },
         Self {
             common_phase: true,
+            boundary_metrics: true,
+            decision_iterations: 3,
+            ..Self::TRACKED
+        },
+        Self {
+            boundary_metrics: true,
+            ..Self::TRACKED
+        },
+        Self {
+            boundary_metrics: true,
             decision_iterations: 3,
             ..Self::TRACKED
         },

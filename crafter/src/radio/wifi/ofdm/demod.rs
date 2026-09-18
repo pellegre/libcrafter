@@ -259,7 +259,7 @@ pub(in crate::radio) fn demodulate_data_profile(
             } else {
                 bins[bin].mul(a.channel[bin].conj()).scale(sign * polarity)
             };
-            let corrected = if profile.common_phase && stbc_second.is_none() {
+            let corrected = if profile.boundary_metrics && stbc_second.is_none() {
                 corrected.scale(1. / a.channel[bin].power().max(1e-12))
             } else {
                 corrected
@@ -377,7 +377,7 @@ pub(in crate::radio) fn demodulate_data_profile(
             if !v.power().is_finite() {
                 return Err(());
             }
-            if profile.common_phase && stbc_second.is_none() {
+            if profile.boundary_metrics && stbc_second.is_none() {
                 let width = if nbpsc == 1 { 1 } else { nbpsc / 2 };
                 demap_boundaries(v.i, width, scale.sqrt(), &mut interleaved);
                 if nbpsc > 1 {
