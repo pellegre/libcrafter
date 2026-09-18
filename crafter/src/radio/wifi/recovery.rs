@@ -11,6 +11,7 @@ pub(in crate::radio) struct Profile {
     /// Equalized pilot sum and boundary-distance metrics without clock fitting.
     pub common_phase: bool,
     pub boundary_metrics: bool,
+    pub guard_quarters: u8,
 }
 
 impl Profile {
@@ -20,14 +21,16 @@ impl Profile {
         decision_iterations: 0,
         common_phase: false,
         boundary_metrics: false,
+        guard_quarters: 2,
     };
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 15] = [
         Self {
             track_timing: false,
             pilot_alpha: 1.,
             decision_iterations: 0,
             common_phase: false,
             boundary_metrics: false,
+            guard_quarters: 2,
         },
         Self {
             track_timing: true,
@@ -35,6 +38,7 @@ impl Profile {
             decision_iterations: 0,
             common_phase: false,
             boundary_metrics: false,
+            guard_quarters: 2,
         },
         Self {
             track_timing: false,
@@ -42,6 +46,7 @@ impl Profile {
             decision_iterations: 0,
             common_phase: false,
             boundary_metrics: false,
+            guard_quarters: 2,
         },
         Self::TRACKED,
         Self {
@@ -76,6 +81,34 @@ impl Profile {
         Self {
             boundary_metrics: true,
             decision_iterations: 3,
+            ..Self::TRACKED
+        },
+        Self {
+            boundary_metrics: true,
+            common_phase: true,
+            decision_iterations: 0,
+            guard_quarters: 1,
+            ..Self::TRACKED
+        },
+        Self {
+            boundary_metrics: true,
+            common_phase: false,
+            decision_iterations: 3,
+            guard_quarters: 1,
+            ..Self::TRACKED
+        },
+        Self {
+            boundary_metrics: true,
+            common_phase: true,
+            decision_iterations: 0,
+            guard_quarters: 3,
+            ..Self::TRACKED
+        },
+        Self {
+            boundary_metrics: true,
+            common_phase: false,
+            decision_iterations: 3,
+            guard_quarters: 3,
             ..Self::TRACKED
         },
     ];

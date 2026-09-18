@@ -216,7 +216,8 @@ pub(in crate::radio) fn demodulate_data_profile(
         // edge. Pilot slope measures accumulated clock drift in
         // samples; follow it without resampling or changing source positions.
         let advance = if profile.track_timing {
-            guard as isize / 2 + (phase_slope * 64. / std::f32::consts::TAU).round() as isize
+            guard as isize * profile.guard_quarters as isize / 4
+                + (phase_slope * 64. / std::f32::consts::TAU).round() as isize
         } else {
             0
         };
