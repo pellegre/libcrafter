@@ -17,6 +17,8 @@ behaviors:
     mcs: [0, 1, 2, 3, 4, 5, 6, 7]
     guard_interval_ns: [400, 800]
     checks: [independent_pilot_tone_interference, both_phase_signs, exact_psdu, valid_fcs, chunk_invariance, retained_clock_tracking]
+  - name: integrity-aided-recovery
+    checks: [bounded_attempts, retain_original_valid_psdu, retain_valid_aggregate_members, no_overlapping_member_replacement, original_order_and_coordinates, inspectable_retries, no_invalid_delivery]
 coverage_cases: [wifi-ofdm-tracking-quality]
 supported_cases:
   - {name: wifi-ofdm-tracking-quality, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}

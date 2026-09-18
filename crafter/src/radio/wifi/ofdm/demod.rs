@@ -4,7 +4,13 @@ use super::{
     signal::{SignalInfo, TRELLIS_SIGNS},
     sync::{fft64, Acquisition},
 };
-use crate::radio::{wifi::ht::stbc, ComplexSample, PhyDiagnostic};
+use crate::radio::{
+    wifi::{
+        ht::stbc,
+        recovery::{self, DecodeAttempt, Profile},
+    },
+    ComplexSample, PhyDiagnostic,
+};
 
 fn feedback(state: &mut u8) -> u8 {
     let bit = ((*state >> 6) ^ (*state >> 3)) & 1;
@@ -38,32 +44,51 @@ pub(super) fn decode_data(
     samples: &[ComplexSample],
     a: &Acquisition,
     info: SignalInfo,
-) -> Result<(Vec<u8>, PhyDiagnostic), ()> {
-    decode_data_mode(samples, a, info, None)
+) -> DecodeAttempt {
+    recovery::recover(false, |profile| {
+        DecodeAttempt::plain(decode_data_profile(
+            samples, a, info, None, false, None, profile,
+        ))
+    })
 }
 
+#[cfg(test)]
 pub(super) fn decode_data_mode(
     samples: &[ComplexSample],
     a: &Acquisition,
     info: SignalInfo,
     ht_guard: Option<usize>,
 ) -> Result<(Vec<u8>, PhyDiagnostic), ()> {
-    decode_data_mode_with_format(samples, a, info, ht_guard, false, None)
+    recovery::recover(false, |profile| {
+        DecodeAttempt::plain(decode_data_profile(
+            samples, a, info, ht_guard, false, None, profile,
+        ))
+    })
+    .decoded
 }
-pub(in crate::radio) fn decode_data_mode_with_format(
+pub(in crate::radio) fn decode_data_profile(
     samples: &[ComplexSample],
     a: &Acquisition,
     info: SignalInfo,
     ht_guard: Option<usize>,
     greenfield: bool,
     stbc_second: Option<&[ComplexSample; 64]>,
+    profile: Profile,
 ) -> Result<(Vec<u8>, PhyDiagnostic), ()> {
-    let (coded, tracking) =
-        demodulate_data(samples, a, info, ht_guard, true, greenfield, stbc_second)?;
+    let (coded, tracking) = demodulate_data_profile(
+        samples,
+        a,
+        info,
+        ht_guard,
+        true,
+        greenfield,
+        stbc_second,
+        profile,
+    )?;
     Ok((recover_bcc(&coded, info)?, tracking))
 }
 
-pub(in crate::radio) fn demodulate_data(
+pub(in crate::radio) fn demodulate_data_profile(
     samples: &[ComplexSample],
     a: &Acquisition,
     info: SignalInfo,
@@ -71,6 +96,7 @@ pub(in crate::radio) fn demodulate_data(
     bcc_interleaving: bool,
     greenfield: bool,
     stbc_second: Option<&[ComplexSample; 64]>,
+    profile: Profile,
 ) -> Result<(Vec<f32>, PhyDiagnostic), ()> {
     let guard = ht_guard.unwrap_or(16);
     let stride = 64 + guard;
@@ -109,8 +135,11 @@ pub(in crate::radio) fn demodulate_data(
         // Start the FFT inside the cyclic prefix instead of at its trailing
         // edge. Pilot slope measures accumulated clock drift in
         // samples; follow it without resampling or changing source positions.
-        let advance =
-            guard as isize / 2 + (phase_slope * 64. / std::f32::consts::TAU).round() as isize;
+        let advance = if profile.track_timing {
+            guard as isize / 2 + (phase_slope * 64. / std::f32::consts::TAU).round() as isize
+        } else {
+            0
+        };
         let nominal = symbol * stride + guard;
         let window_start =
             (nominal as isize - advance).clamp(0, (samples.len() - 64) as isize) as usize;
@@ -177,7 +206,7 @@ pub(in crate::radio) fn demodulate_data(
         // Clock drift changes slowly between symbols. Filter the slope
         // innovation so noise on four pilots does not rotate every DATA tone.
         // Refit common phase for the applied slope and retain its residuals.
-        let slope_delta = 0.3 * (w * xy - x * y) / determinant;
+        let slope_delta = profile.pilot_alpha * (w * xy - x * y) / determinant;
         let intercept = reference + (y - slope_delta * x) / w;
         phase_slope += slope_delta;
         let time = (symbol * stride) as f64;

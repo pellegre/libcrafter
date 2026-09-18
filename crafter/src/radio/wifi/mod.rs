@@ -5,6 +5,7 @@ mod dsss;
 pub(in crate::radio) mod ht;
 pub(in crate::radio) mod ofdm;
 mod parallel;
+mod recovery;
 mod tx;
 mod windowed;
 
