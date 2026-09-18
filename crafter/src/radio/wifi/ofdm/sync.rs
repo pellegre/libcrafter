@@ -133,8 +133,9 @@ pub(in crate::radio) struct Synchronizer {
     short_correlation: ComplexSample,
     short_energy: [f32; 2],
     short_periodic: bool,
-    weak_periodic: bool,
     weak_candidate: Option<Candidate>,
+    weak_strength: f32,
+    weak_report: Option<u64>,
     long_window: Option<LongWindow>,
     candidate: Option<Candidate>,
     reference: [ComplexSample; 64],
@@ -149,8 +150,9 @@ impl Default for Synchronizer {
             short_correlation: ComplexSample::ZERO,
             short_energy: [0.; 2],
             short_periodic: false,
-            weak_periodic: false,
             weak_candidate: None,
+            weak_strength: 0.,
+            weak_report: None,
             long_window: None,
             candidate: None,
             reference: long_time(),
@@ -166,8 +168,9 @@ impl Synchronizer {
         self.short_correlation = ComplexSample::ZERO;
         self.short_energy = [0.; 2];
         self.short_periodic = false;
-        self.weak_periodic = false;
         self.weak_candidate = None;
+        self.weak_strength = 0.;
+        self.weak_report = None;
         self.long_window = None;
         interrupted
     }
@@ -249,13 +252,23 @@ impl Synchronizer {
         }
         self.short_periodic = periodic;
         let weak_periodic = self.count >= 80 && a > 0.001 && b > 0.001 && p.power() > 0.25 * a * b;
-        if weak_periodic && (!self.weak_periodic || self.weak_candidate.is_none()) {
-            self.weak_candidate = Some(Candidate {
-                detected: index,
-                coarse: p.phase() / 16.,
-            });
+        // Weak short-period correlation can reappear inside long training.
+        // Keep the original deadline and refine coarse frequency from the
+        // strongest periodic window rather than restarting the LTF wait.
+        if weak_periodic {
+            let strength = p.power() / (a * b);
+            if self.weak_candidate.is_none() {
+                self.weak_candidate = Some(Candidate {
+                    detected: index,
+                    coarse: p.phase() / 16.,
+                });
+                self.weak_strength = strength;
+                self.weak_report = None;
+            } else if strength > self.weak_strength {
+                self.weak_candidate.as_mut().unwrap().coarse = p.phase() / 16.;
+                self.weak_strength = strength;
+            }
         }
-        self.weak_periodic = weak_periodic;
         let mut failure = None;
         if let Some(c) = self.candidate {
             if index - c.detected > 320 {
@@ -274,9 +287,13 @@ impl Synchronizer {
         if let Some(c) = self.weak_candidate {
             if index - c.detected > 320 {
                 self.weak_candidate = None;
-            } else if index - c.detected >= 128 && self.count >= 128 && !weak_periodic {
-                if let Some(acquisition) = self.acquire_long(index, c.coarse, 0.36) {
-                    self.weak_candidate = None;
+            } else if index - c.detected >= 128
+                && self.count >= 128
+                && !weak_periodic
+                && self.weak_report.map_or(true, |last| index - last >= 32)
+            {
+                if let Some(acquisition) = self.acquire_long(index, c.coarse, 0.16) {
+                    self.weak_report = Some(index);
                     return Some(SyncEvent::WeakAcquired(acquisition));
                 }
             }

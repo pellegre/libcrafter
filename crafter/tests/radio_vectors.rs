@@ -396,7 +396,16 @@ fn radio_weak_training_exact_frame_recovery() {
         assert_eq!(hex(&Sha256::digest(&bytes)), c[4]);
         assert_eq!(hex(&Sha256::digest(&source)), c[3]);
         assert_eq!(bytes.len(), 2 * c[5].parse::<usize>().unwrap());
-        assert_eq!(&bytes[2 * (37 + 320)..], &source[2 * (37 + 320)..]);
+        let data = 2 * (37 + 320);
+        if c[2] == "ltf_dc" {
+            let scaled: Vec<u8> = source[data..]
+                .iter()
+                .map(|b| ((*b as i8 as f32 * 0.5).round_ties_even() as i8) as u8)
+                .collect();
+            assert_eq!(&bytes[data..], scaled);
+        } else {
+            assert_eq!(&bytes[data..], &source[data..]);
+        }
         for chunk in [1, 127, 65536] {
             let config = RxConfig {
                 sample_rate_hz: 20_000_000,
@@ -434,7 +443,7 @@ fn radio_weak_training_exact_frame_recovery() {
             assert_eq!(frames[0].start.sample_index, 1_000_037);
         }
     }
-    assert_eq!(matrix.len(), 48);
+    assert_eq!(matrix.len(), 80);
 }
 
 #[test]

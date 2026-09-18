@@ -13,7 +13,7 @@ behaviors:
     checks: [recover_later_independent_frame, exact_psdu, original_sample_position, valid_fcs]
   - name: weak-training
     modes: [legacy_ofdm, ht20_single_stream]
-    checks: [independent_noisy_stf, complementary_ltf_errors, exact_psdu, valid_fcs, chunk_invariance, no_duplicate_occurrence, original_acquisition_priority]
+    checks: [independent_noisy_stf, complementary_ltf_errors, low_ltf_repetition, training_dc_interference, preserve_weak_search_deadline, strongest_short_training_frequency, exact_psdu, valid_fcs, chunk_invariance, no_duplicate_occurrence, original_acquisition_priority]
   - name: bounded-hypotheses
     max_candidates: 2
     checks: [shared_sample_reservation_bound, reset_all_candidates, no_unverified_frame]
