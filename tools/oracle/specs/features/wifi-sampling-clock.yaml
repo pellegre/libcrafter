@@ -16,6 +16,12 @@ behaviors:
   - name: receiver-clock-recovery
     checks: [exact_psdu_bytes, valid_fcs, chunk_invariance]
     chunk_samples: [127, 65536]
+  - name: ht20-clock-matrix
+    mcs: [0, 1, 2, 3, 4, 5, 6, 7]
+    guard_interval_ns: [400, 800]
+    receiver_clock_ppm: [-80, 80]
+    lengths: [4095]
+    checks: [independent_iq, exact_psdu_bytes, valid_fcs, source_coordinates, chunk_invariance, adaptive_fft_window]
 coverage_cases: [wifi-ofdm-clock-matrix]
 supported_cases:
   - {name: wifi-ofdm-clock-matrix, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
@@ -26,4 +32,5 @@ backend_support:
       - Independent fixture inventory is established before implementing clock recovery.
       - Receiver acceptance requires exact bytes across this matrix, not merely fixture hashes.
       - radio_sampling_clock_exact_frame_recovery verifies 48 fixtures at both chunk sizes.
+      - HT clock fixtures cover both drift signs and both guard intervals; the FFT window follows pilot-derived drift within the retained DATA samples.
       - Support here is bounded offline clock drift, not arbitrary resampling or live qualification.
