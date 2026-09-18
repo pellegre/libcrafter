@@ -99,6 +99,7 @@ pub(in crate::radio) struct Acquisition {
     pub coarse_frequency_rad: f32,
     pub channel: [ComplexSample; 64],
     pub iq_balance: [f32; 2],
+    pub noise_power: [f32; 2],
     pub correlation: f32,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -412,7 +413,26 @@ impl Synchronizer {
         } else {
             [1., 0.]
         };
+        let noise_power = std::array::from_fn(|balanced| {
+            let difference = fft64(std::array::from_fn(|n| {
+                let v = first[n].sub(second[n]);
+                if balanced == 0 {
+                    v
+                } else {
+                    ComplexSample {
+                        i: v.i,
+                        q: (v.q - iq_balance[1] * v.i) * iq_balance[0],
+                    }
+                }
+            }));
+            (-26i32..=26)
+                .filter(|k| *k != 0)
+                .map(|k| difference[k.rem_euclid(64) as usize].power())
+                .sum::<f32>()
+                / 104.
+        });
         Some(Acquisition {
+            noise_power,
             iq_balance,
             preamble_start,
             signal_start: index + 1,

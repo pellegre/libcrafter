@@ -209,7 +209,7 @@ pub(in crate::radio) fn demodulate_data_profile(
     stbc_second: Option<&[ComplexSample; 64]>,
     profile: Profile,
 ) -> Result<(Vec<f32>, PhyDiagnostic), ()> {
-    if profile.correct_iq && stbc_second.is_some() {
+    if (profile.correct_iq || profile.mmse) && stbc_second.is_some() {
         return Err(());
     }
     let balanced;
@@ -219,6 +219,25 @@ pub(in crate::radio) fn demodulate_data_profile(
         &balanced
     } else {
         a
+    };
+    let noise = if profile.mmse {
+        let repeated = a.noise_power[usize::from(apply_iq)].max(1e-6);
+        if ht_guard.is_some() {
+            let adjacent = (-28i32..28)
+                .filter(|k| *k != -1 && *k != 0)
+                .map(|k| {
+                    a.channel[k.rem_euclid(64) as usize]
+                        .sub(a.channel[(k + 1).rem_euclid(64) as usize])
+                        .power()
+                })
+                .sum::<f32>()
+                / 108.;
+            repeated.max(adjacent)
+        } else {
+            repeated
+        }
+    } else {
+        0.
     };
     let guard = ht_guard.unwrap_or(16);
     let stride = 64 + guard;
@@ -311,7 +330,7 @@ pub(in crate::radio) fn demodulate_data_profile(
                 bins[bin].mul(a.channel[bin].conj()).scale(sign * polarity)
             };
             let corrected = if profile.boundary_metrics && stbc_second.is_none() {
-                corrected.scale(1. / a.channel[bin].power().max(1e-12))
+                corrected.scale(1. / (a.channel[bin].power() + noise).max(1e-12))
             } else {
                 corrected
             };
@@ -423,7 +442,7 @@ pub(in crate::radio) fn demodulate_data_profile(
                 bins[k]
                     .mul(a.channel[k].conj())
                     .mul(rotation)
-                    .scale(1. / power)
+                    .scale(1. / (power + noise))
             };
             if !v.power().is_finite() {
                 return Err(());
