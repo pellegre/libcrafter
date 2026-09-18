@@ -299,6 +299,7 @@ fn check_ht_impairment_matrix(
     let index = fs::read_to_string(root.join(index_name)).unwrap();
     let mut matrix = std::collections::BTreeSet::new();
     let mut failures = Vec::new();
+    let mut unavailable_clock_frames = 0;
     for line in index.lines().skip(1) {
         let c: Vec<_> = line.split('\t').collect();
         let mcs: u8 = c[1].parse().unwrap();
@@ -350,6 +351,17 @@ fn check_ht_impairment_matrix(
                 continue;
             }
             let frame = &frames[0];
+            if frame.diagnostics.iter().any(|d| {
+                matches!(
+                    d,
+                    PhyDiagnostic::OfdmTracking {
+                        sampling_clock_offset_ppm: None,
+                        ..
+                    }
+                )
+            }) {
+                unavailable_clock_frames += 1;
+            }
             assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
             assert_eq!(frame.start.epoch, 7);
             assert_eq!(frame.start.sample_index, 1_000_037);
@@ -361,6 +373,9 @@ fn check_ht_impairment_matrix(
         }
     }
     assert_eq!(matrix.len(), 8 * guards.len() * parameters.len());
+    if index_name == "ht-common-index.tsv" {
+        assert!(unavailable_clock_frames > 0);
+    }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
@@ -425,6 +440,11 @@ fn radio_weak_training_exact_frame_recovery() {
 #[test]
 fn radio_ht_data_decision_recovery_preserves_bytes_and_coordinates() {
     check_ht_impairment_matrix("ht-decision-index.tsv", 100, &[-1, 1], &[16]);
+}
+
+#[test]
+fn radio_ht_common_phase_recovery_preserves_bytes_and_coordinates() {
+    check_ht_impairment_matrix("ht-common-index.tsv", 100, &[-1, 1], &[8, 16]);
 }
 
 fn hex(bytes: &[u8]) -> String {

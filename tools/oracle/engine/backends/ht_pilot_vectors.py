@@ -17,7 +17,7 @@ import ofdm_vectors as base
 OUT = base.OUT
 
 
-def generate(out):
+def generate(out, slope_magnitude=0.014, prefix="ht-pilot"):
     rows = ['name\tmcs\tguard_samples\tphase_sign\tsource_sha256\tsha256\tsamples\tpsdu_hex']
     for line in (OUT / 'ht-bcc-index.tsv').read_text().splitlines()[1:]:
         c = line.split('\t')
@@ -33,7 +33,7 @@ def generate(out):
         for phase_sign in [-1, 1]:
             samples = original.copy()
             for symbol in range(symbols):
-                slope = phase_sign * 0.014 * (-1 if symbol % 2 else 1)
+                slope = phase_sign * slope_magnitude * (-1 if symbol % 2 else 1)
                 tones = []
                 for j, k in enumerate([-21, -7, 7, 21]):
                     amplitude = polarity[symbol + 3] * [1, 1, 1, -1][(symbol + j) % 4]
@@ -44,12 +44,12 @@ def generate(out):
                     samples[start + symbol * (64 + guard) + n] += value
             iq = bytes(max(-128, min(127, round(value))) & 255
                        for sample in samples for value in [sample.real, sample.imag])
-            name = f'ht-pilot-{c[1]}-gi{guard * 50}-phase{phase_sign:+d}'
+            name = f'{prefix}-{c[1]}-gi{guard * 50}-phase{phase_sign:+d}'
             (out / (name + '.cs8')).write_bytes(iq)
             rows.append('\t'.join(map(str, [name, c[1], guard, phase_sign, source_hash,
                                            hashlib.sha256(iq).hexdigest(), len(iq) // 2, c[4]])))
     assert len(rows) == 33
-    (out / 'ht-pilot-index.tsv').write_text('\n'.join(rows) + '\n')
+    (out / f'{prefix}-index.tsv').write_text('\n'.join(rows) + '\n')
 
 
 if __name__ == '__main__':

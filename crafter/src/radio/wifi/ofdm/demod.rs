@@ -40,6 +40,19 @@ fn demap(value: f32, width: usize, scale: f32, weight: f32, out: &mut Vec<f32>) 
         out.push((distance[0] - distance[1]) * weight);
     }
 }
+// Signed distance to each nearest Gray-bit decision boundary. Unlike max-log
+// squared distances, an outer QAM point does not dominate the sign-bit metric.
+fn demap_boundaries(value: f32, width: usize, scale: f32, out: &mut Vec<f32>) {
+    let x = value * scale;
+    out.push(x);
+    if width >= 2 {
+        out.push((if width == 2 { 2. } else { 4. }) - x.abs());
+    }
+    if width == 3 {
+        out.push(2. - (4. - x.abs()).abs());
+    }
+}
+
 // Confidence in a nearest constellation coordinate decreases at decision
 // boundaries. Ambiguous DATA tones contribute less to the phase estimate.
 fn nearest_axis(value: f32, width: usize, scale: f32) -> (f32, f32) {
@@ -246,6 +259,11 @@ pub(in crate::radio) fn demodulate_data_profile(
             } else {
                 bins[bin].mul(a.channel[bin].conj()).scale(sign * polarity)
             };
+            let corrected = if profile.common_phase && stbc_second.is_none() {
+                corrected.scale(1. / a.channel[bin].power().max(1e-12))
+            } else {
+                corrected
+            };
             let value = corrected.mul(ComplexSample::rotation(-phase_slope * k as f32));
             (k as f32, value)
         });
@@ -273,8 +291,16 @@ pub(in crate::radio) fn demodulate_data_profile(
         // Clock drift changes slowly between symbols. Filter the slope
         // innovation so noise on four pilots does not rotate every DATA tone.
         // Refit common phase for the applied slope and retain its residuals.
-        let slope_delta = profile.pilot_alpha * (w * xy - x * y) / determinant;
-        let intercept = reference + (y - slope_delta * x) / w;
+        let slope_delta = if profile.common_phase {
+            0.
+        } else {
+            profile.pilot_alpha * (w * xy - x * y) / determinant
+        };
+        let intercept = if profile.common_phase {
+            reference
+        } else {
+            reference + (y - slope_delta * x) / w
+        };
         phase_slope += slope_delta;
         let time = (symbol * stride) as f64;
         sum_x += time;
@@ -351,6 +377,14 @@ pub(in crate::radio) fn demodulate_data_profile(
             if !v.power().is_finite() {
                 return Err(());
             }
+            if profile.common_phase && stbc_second.is_none() {
+                let width = if nbpsc == 1 { 1 } else { nbpsc / 2 };
+                demap_boundaries(v.i, width, scale.sqrt(), &mut interleaved);
+                if nbpsc > 1 {
+                    demap_boundaries(v.q, width, scale.sqrt(), &mut interleaved);
+                }
+                continue;
+            }
             demap(
                 v.i,
                 if nbpsc == 1 { 1 } else { nbpsc / 2 },
@@ -377,7 +411,7 @@ pub(in crate::radio) fn demodulate_data_profile(
         }
     }
     let symbols = info.data_symbols as f64;
-    let sampling_clock_offset_ppm = (info.data_symbols > 1).then(|| {
+    let sampling_clock_offset_ppm = (!profile.common_phase && info.data_symbols > 1).then(|| {
         let slope_per_sample =
             (symbols * sum_xy - sum_x * sum_y) / (symbols * sum_xx - sum_x * sum_x);
         (-slope_per_sample * 64. / std::f64::consts::TAU * 1e6) as f32
