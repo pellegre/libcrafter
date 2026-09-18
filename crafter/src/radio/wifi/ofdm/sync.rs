@@ -130,6 +130,7 @@ pub(in crate::radio) struct Synchronizer {
     next: usize,
     short_correlation: ComplexSample,
     short_energy: [f32; 2],
+    short_periodic: bool,
     long_window: Option<LongWindow>,
     candidate: Option<Candidate>,
     reference: [ComplexSample; 64],
@@ -143,6 +144,7 @@ impl Default for Synchronizer {
             next: 0,
             short_correlation: ComplexSample::ZERO,
             short_energy: [0.; 2],
+            short_periodic: false,
             long_window: None,
             candidate: None,
             reference: long_time(),
@@ -157,6 +159,7 @@ impl Synchronizer {
         self.next = 0;
         self.short_correlation = ComplexSample::ZERO;
         self.short_energy = [0.; 2];
+        self.short_periodic = false;
         self.long_window = None;
         interrupted
     }
@@ -225,17 +228,18 @@ impl Synchronizer {
             self.short_energy[0] += entering.power() - leaving_x.power();
             self.short_energy[1] += sample.power() - leaving_y.power();
         }
-        if self.candidate.is_none() && self.count >= 80 {
-            let p = self.short_correlation;
-            let [a, b] = self.short_energy;
-            // Admit lower-SNR legacy rates; SIGNAL and FCS remain the integrity gates.
-            if a > 0.001 && b > 0.001 && p.power() > 0.6 * a * b {
-                self.candidate = Some(Candidate {
-                    detected: index,
-                    coarse: p.phase() / 16.,
-                });
-            }
+        let p = self.short_correlation;
+        let [a, b] = self.short_energy;
+        // SIGNAL and FCS remain the integrity gates. A new periodic burst must
+        // replace a stale search before that search's timeout can hide its LTF.
+        let periodic = self.count >= 80 && a > 0.001 && b > 0.001 && p.power() > 0.6 * a * b;
+        if periodic && (!self.short_periodic || self.candidate.is_none()) {
+            self.candidate = Some(Candidate {
+                detected: index,
+                coarse: p.phase() / 16.,
+            });
         }
+        self.short_periodic = periodic;
         let c = self.candidate.as_ref()?;
         // Two complete LTFs must follow the detected short-period window.
         if index - c.detected < 128 || self.count < 128 {
@@ -248,8 +252,7 @@ impl Synchronizer {
         // A still strongly lag-16-periodic STF or tone is not the completed
         // wideband LTF pair. Wait for that short-period coherence to disappear
         // before paying for long-training reference matching.
-        let [a, b] = self.short_energy;
-        if self.short_correlation.power() > 0.6 * a * b {
+        if periodic {
             return None;
         }
         self.acquire_long(index, c.coarse)
