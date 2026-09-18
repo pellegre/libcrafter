@@ -109,9 +109,11 @@ pub(in crate::radio) enum AcquisitionFailure {
 #[derive(Debug)]
 pub(in crate::radio) enum SyncEvent {
     Acquired(Acquisition),
+    WeakAcquired(Acquisition),
     Failure(AcquisitionFailure),
     Reset(Discontinuity),
 }
+#[derive(Clone, Copy)]
 struct Candidate {
     detected: u64,
     coarse: f32,
@@ -131,6 +133,8 @@ pub(in crate::radio) struct Synchronizer {
     short_correlation: ComplexSample,
     short_energy: [f32; 2],
     short_periodic: bool,
+    weak_periodic: bool,
+    weak_candidate: Option<Candidate>,
     long_window: Option<LongWindow>,
     candidate: Option<Candidate>,
     reference: [ComplexSample; 64],
@@ -145,6 +149,8 @@ impl Default for Synchronizer {
             short_correlation: ComplexSample::ZERO,
             short_energy: [0.; 2],
             short_periodic: false,
+            weak_periodic: false,
+            weak_candidate: None,
             long_window: None,
             candidate: None,
             reference: long_time(),
@@ -154,12 +160,14 @@ impl Default for Synchronizer {
 }
 impl Synchronizer {
     pub fn clear(&mut self) -> bool {
-        let interrupted = self.candidate.take().is_some();
+        let interrupted = self.candidate.take().is_some() | self.weak_candidate.take().is_some();
         self.count = 0;
         self.next = 0;
         self.short_correlation = ComplexSample::ZERO;
         self.short_energy = [0.; 2];
         self.short_periodic = false;
+        self.weak_periodic = false;
+        self.weak_candidate = None;
         self.long_window = None;
         interrupted
     }
@@ -240,25 +248,47 @@ impl Synchronizer {
             });
         }
         self.short_periodic = periodic;
-        let c = self.candidate.as_ref()?;
-        // Two complete LTFs must follow the detected short-period window.
-        if index - c.detected < 128 || self.count < 128 {
-            return None;
+        let weak_periodic = self.count >= 80 && a > 0.001 && b > 0.001 && p.power() > 0.25 * a * b;
+        if weak_periodic && (!self.weak_periodic || self.weak_candidate.is_none()) {
+            self.weak_candidate = Some(Candidate {
+                detected: index,
+                coarse: p.phase() / 16.,
+            });
         }
-        if index - c.detected > 320 {
-            self.candidate = None;
-            return Some(SyncEvent::Failure(AcquisitionFailure::LongTrainingNotFound));
+        self.weak_periodic = weak_periodic;
+        let mut failure = None;
+        if let Some(c) = self.candidate {
+            if index - c.detected > 320 {
+                self.candidate = None;
+                failure = Some(SyncEvent::Failure(AcquisitionFailure::LongTrainingNotFound));
+            } else if index - c.detected >= 128 && self.count >= 128 && !periodic {
+                if let Some(acquisition) = self.acquire_long(index, c.coarse, 0.5) {
+                    self.clear();
+                    return Some(SyncEvent::Acquired(acquisition));
+                }
+            }
         }
-        // A still strongly lag-16-periodic STF or tone is not the completed
-        // wideband LTF pair. Wait for that short-period coherence to disappear
-        // before paying for long-training reference matching.
-        if periodic {
-            return None;
+        // Weak training may seed a second hypothesis, but cannot reset or move
+        // the original acquisition. The header and payload integrity checks
+        // remain mandatory for either hypothesis.
+        if let Some(c) = self.weak_candidate {
+            if index - c.detected > 320 {
+                self.weak_candidate = None;
+            } else if index - c.detected >= 128 && self.count >= 128 && !weak_periodic {
+                if let Some(acquisition) = self.acquire_long(index, c.coarse, 0.36) {
+                    self.weak_candidate = None;
+                    return Some(SyncEvent::WeakAcquired(acquisition));
+                }
+            }
         }
-        self.acquire_long(index, c.coarse)
+        failure
     }
+
     // Consecutive training candidates share 63 of their 64 lag-64 pairs.
     fn training_window(&mut self, index: u64) -> LongWindow {
+        if let Some(window) = self.long_window.filter(|w| w.index == index) {
+            return window;
+        }
         let window = if let Some(previous) = self
             .long_window
             .filter(|w| w.index.checked_add(1) == Some(index))
@@ -297,14 +327,19 @@ impl Synchronizer {
     }
     // Keep the training buffers and phase work off the per-sample search path.
     #[inline(never)]
-    fn acquire_long(&mut self, index: u64, coarse: f32) -> Option<SyncEvent> {
+    fn acquire_long(
+        &mut self,
+        index: u64,
+        coarse: f32,
+        repeat_threshold: f32,
+    ) -> Option<Acquisition> {
         let window = self.training_window(index);
         let mut cross = window.cross;
         let [repeat_a, repeat_b] = window.energy;
         // A common frequency correction rotates the cross correlation but
         // preserves its magnitude and both energies. Reject nonrepeating
         // candidates before phase correction and reference matching.
-        if cross.power() < 0.5 * repeat_a * repeat_b || repeat_a + repeat_b < 0.002 {
+        if cross.power() < repeat_threshold * repeat_a * repeat_b || repeat_a + repeat_b < 0.002 {
             return None;
         }
         cross = cross.mul(ComplexSample::rotation(-coarse * 64.));
@@ -346,8 +381,7 @@ impl Synchronizer {
         for (k, sign) in [(36, 1.), (37, 1.), (27, -1.), (28, -1.)] {
             channel[k] = bins[k].scale(sign);
         }
-        self.clear();
-        Some(SyncEvent::Acquired(Acquisition {
+        Some(Acquisition {
             preamble_start,
             signal_start: index + 1,
             phase_origin: first_index,
@@ -355,7 +389,7 @@ impl Synchronizer {
             coarse_frequency_rad: coarse,
             channel,
             correlation: score,
-        }))
+        })
     }
 }
 
@@ -534,6 +568,29 @@ mod tests {
                 "imaginary bin {k}"
             );
         }
+    }
+    #[test]
+    fn radio_sync_weak_training_preserves_original_search() {
+        let bytes = include_bytes!("../../../../tests/fixtures/iq/ofdm-6-clean-training-ltf.cs8");
+        let mut sync = Synchronizer::default();
+        let mut weak = 0;
+        for (index, pair) in bytes.chunks_exact(2).enumerate() {
+            let previous = sync.candidate.map(|c| c.detected);
+            let event = sync.push(
+                ComplexSample {
+                    i: pair[0] as i8 as f32 / 128.,
+                    q: pair[1] as i8 as f32 / 128.,
+                },
+                index as u64,
+            );
+            if matches!(event, Some(SyncEvent::WeakAcquired(_))) {
+                weak += 1;
+                assert!(previous.is_some());
+                assert_eq!(sync.candidate.map(|c| c.detected), previous);
+                assert_eq!(sync.count, 256);
+            }
+        }
+        assert_eq!(weak, 1);
     }
     #[test]
     fn radio_sync_noise_rejection_and_bounded_failure() {

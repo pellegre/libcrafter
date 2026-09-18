@@ -359,6 +359,64 @@ fn check_ht_impairment_matrix(index_name: &str, length: usize, parameters: &[i32
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+#[test]
+fn radio_weak_training_exact_frame_recovery() {
+    use crafter::radio::*;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    let mut matrix = std::collections::BTreeSet::new();
+    for line in include_str!("fixtures/iq/ofdm-training-index.tsv")
+        .lines()
+        .skip(1)
+    {
+        let c: Vec<_> = line.split('\t').collect();
+        assert_eq!(c.len(), 7);
+        assert!(matrix.insert((c[1], c[2])));
+        let bytes = fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+        let source = fs::read(root.join(format!("{}.cs8", c[1]))).unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[4]);
+        assert_eq!(hex(&Sha256::digest(&source)), c[3]);
+        assert_eq!(bytes.len(), 2 * c[5].parse::<usize>().unwrap());
+        assert_eq!(&bytes[2 * (37 + 320)..], &source[2 * (37 + 320)..]);
+        for chunk in [1, 127, 65536] {
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: chunk,
+                max_buffer_samples: 262_144,
+                max_frame_bytes: 4095,
+                max_pending_frames: 4,
+                max_capture_samples: 200_000,
+                max_duration: std::time::Duration::from_secs(1),
+            };
+            let position = IqPosition {
+                epoch: 7,
+                sequence: 0,
+                sample_index: 1_000_000,
+                time_anchor: None,
+                discontinuity: None,
+            };
+            let mut source =
+                ReaderIqSource::new(std::io::Cursor::new(&bytes), config, position).unwrap();
+            let mut decoder = WifiDecoder::new();
+            let mut frames = Vec::new();
+            loop {
+                let event = source.next_event().unwrap();
+                let end = matches!(event, IqEvent::End(_));
+                frames.extend(decoder.consume(event).unwrap().frames);
+                if end {
+                    break;
+                }
+            }
+            assert_eq!(frames.len(), 1, "{} chunk={chunk}", c[0]);
+            assert_eq!(hex(&frames[0].bytes), c[6], "{} chunk={chunk}", c[0]);
+            assert_eq!(frames[0].integrity, FrameIntegrity::ValidFcs);
+            assert_eq!(frames[0].start.epoch, 7);
+            assert_eq!(frames[0].start.sample_index, 1_000_037);
+        }
+    }
+    assert_eq!(matrix.len(), 48);
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }

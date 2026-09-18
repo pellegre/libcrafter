@@ -34,6 +34,7 @@ pub struct DecoderStats {
     pub dropped_frames: u64,
 }
 struct Pending {
+    weak: bool,
     acquisition: Acquisition,
     start: IqPosition,
     samples: Vec<ComplexSample>,
@@ -154,6 +155,18 @@ impl PhyDecoder for LegacyOfdmDecoder {
         for (offset, sample) in chunk.normalized().enumerate() {
             let index = chunk.position().sample_index + offset as u64;
             for slot in 0..self.pending.len() {
+                // Header reservations on the original acquisition path take
+                // priority over the optional weak-training hypothesis.
+                if self.pending[slot]
+                    .as_ref()
+                    .is_some_and(|p| !p.weak && matches!(p.samples.len(), 79 | 159 | 239))
+                {
+                    for other in &mut self.pending {
+                        if other.as_ref().is_some_and(|p| p.weak) {
+                            *other = None;
+                        }
+                    }
+                }
                 let reserved: usize = self
                     .pending
                     .iter()
@@ -335,8 +348,46 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 }
             }
             if let Some(event) = self.sync.push(sample, index) {
+                let weak = matches!(event, SyncEvent::WeakAcquired(_));
                 match event {
-                    SyncEvent::Acquired(a) => {
+                    SyncEvent::Acquired(a) | SyncEvent::WeakAcquired(a) => {
+                        // The two searches can locate the same training pair.
+                        // Prefer the original path before either DATA decode.
+                        if weak
+                            && self.pending.iter().flatten().any(|p| {
+                                !p.weak
+                                    && p.acquisition.preamble_start.abs_diff(a.preamble_start)
+                                        <= 128
+                            })
+                        {
+                            continue;
+                        }
+                        if !weak {
+                            for p in &mut self.pending {
+                                if p.as_ref().is_some_and(|p| {
+                                    p.weak
+                                        && p.acquisition.preamble_start.abs_diff(a.preamble_start)
+                                            <= 128
+                                }) {
+                                    *p = None;
+                                }
+                            }
+                            let reserved: usize = self
+                                .pending
+                                .iter()
+                                .flatten()
+                                .map(|p| p.samples.capacity())
+                                .sum();
+                            if self.pending.iter().all(Option::is_some)
+                                || config.max_buffer_samples.saturating_sub(reserved) < 80
+                            {
+                                for p in &mut self.pending {
+                                    if p.as_ref().is_some_and(|p| p.weak) {
+                                        *p = None;
+                                    }
+                                }
+                            }
+                        }
                         let mut start = chunk.position().clone();
                         start.sample_index = a.preamble_start;
                         let reserved: usize = self
@@ -354,6 +405,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             continue;
                         };
                         self.pending[slot] = Some(Pending {
+                            weak,
                             acquisition: a,
                             start,
                             samples: Vec::with_capacity(80),
