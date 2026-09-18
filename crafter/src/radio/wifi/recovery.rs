@@ -7,27 +7,40 @@ use std::ops::Range;
 pub(in crate::radio) struct Profile {
     pub track_timing: bool,
     pub pilot_alpha: f32,
+    pub decision_iterations: u8,
 }
 
 impl Profile {
     pub const TRACKED: Self = Self {
         track_timing: true,
         pilot_alpha: 0.3,
+        decision_iterations: 0,
     };
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 6] = [
         Self {
             track_timing: false,
             pilot_alpha: 1.,
+            decision_iterations: 0,
         },
         Self {
             track_timing: true,
             pilot_alpha: 1.,
+            decision_iterations: 0,
         },
         Self {
             track_timing: false,
             pilot_alpha: 0.3,
+            decision_iterations: 0,
         },
         Self::TRACKED,
+        Self {
+            decision_iterations: 1,
+            ..Self::TRACKED
+        },
+        Self {
+            decision_iterations: 3,
+            ..Self::TRACKED
+        },
     ];
 }
 
