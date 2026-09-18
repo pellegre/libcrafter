@@ -274,7 +274,10 @@ fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
     } else {
         return Err(());
     };
-    let count = info.data_symbols * info.data_bits_per_symbol;
+    // Six nonscrambled TAIL zeros terminate this encoder before PAD. Trace
+    // only through that boundary; padding must not choose the PSDU's path.
+    // IEEE 802.11-2020 17.3.5.3 and 19.3.11.1 (one BCC encoder).
+    let count = 16 + 8 * info.psdu_bytes + 6;
     let mut metric = [f32::INFINITY; 64];
     metric[0] = 0.;
     let mut history = vec![[0u8; 64]; count];
@@ -314,17 +317,11 @@ fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
         }
         metric = next;
     }
-    let mut state = (0..64)
-        .min_by(|x, y| metric[*x].total_cmp(&metric[*y]))
-        .ok_or(())?;
+    let mut state = 0; // Known encoder state immediately after TAIL.
     let mut bits = vec![0; count];
     for t in (0..count).rev() {
         bits[t] = (state & 1) as u8;
         state = history[t][state] as usize;
-    }
-    let tail = 16 + 8 * info.psdu_bytes;
-    if bits[tail..tail + 6].iter().any(|b| *b != 0) {
-        return Err(());
     }
     descramble_psdu(bits, info.psdu_bytes)
 }
@@ -387,4 +384,78 @@ pub(in crate::radio) fn valid_fcs(bytes: &[u8]) -> bool {
         }
     }
     (!crc).to_le_bytes() == bytes[bytes.len() - 4..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn radio_bcc_uses_termination_despite_tail_erasures_and_noisy_padding() {
+        // Coded bits and expected bytes come from the independent Python
+        // oracle. Erasing TAIL removes its measured evidence; the specified
+        // zero terminal state still disambiguates the end of the trellis.
+        for (mbps, coded_bits, data_bits, pattern) in [
+            (6, 48, 24, &[1, 1][..]),
+            (9, 48, 36, &[1, 1, 1, 0, 0, 1][..]),
+            (12, 96, 48, &[1, 1][..]),
+            (18, 96, 72, &[1, 1, 1, 0, 0, 1][..]),
+            (24, 192, 96, &[1, 1][..]),
+            (36, 192, 144, &[1, 1, 1, 0, 0, 1][..]),
+            (48, 288, 192, &[1, 1, 1, 0][..]),
+            (54, 288, 216, &[1, 1, 1, 0, 0, 1][..]),
+        ] {
+            let stem = format!(
+                "{}/tests/fixtures/iq/ofdm-tx-{mbps}",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let fixture = std::fs::read_to_string(format!("{stem}.json")).unwrap();
+            let bits: Vec<u8> = fixture
+                .split_once("\"coded\":[")
+                .unwrap()
+                .1
+                .split_once(']')
+                .unwrap()
+                .0
+                .split(',')
+                .map(|bit| bit.parse().unwrap())
+                .collect();
+            let expected = std::fs::read(format!("{stem}.psdu")).unwrap();
+            let tail = 16 + 8 * expected.len();
+            let info = SignalInfo {
+                rate_bps: mbps * 1_000_000,
+                coded_bits_per_symbol: coded_bits,
+                data_bits_per_symbol: data_bits,
+                psdu_bytes: expected.len(),
+                data_symbols: bits.len() / 2 / data_bits,
+                data_start: 0,
+                end_sample_index: 0,
+            };
+            for pad_metric in [-100., 0., 100.] {
+                let soft: Vec<_> = bits
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| pattern[index % pattern.len()] != 0)
+                    .map(|(index, bit)| {
+                        if index < 2 * tail {
+                            if *bit == 1 {
+                                16.
+                            } else {
+                                -16.
+                            }
+                        } else if index < 2 * (tail + 6) {
+                            0.
+                        } else {
+                            pad_metric
+                        }
+                    })
+                    .collect();
+                assert_eq!(
+                    recover_bcc(&soft, info),
+                    Ok(expected.clone()),
+                    "{mbps} Mbps pad={pad_metric}"
+                );
+            }
+        }
+    }
 }
