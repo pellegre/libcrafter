@@ -14,6 +14,7 @@ pub(in crate::radio) struct Profile {
     pub guard_quarters: u8,
     pub correct_iq: bool,
     pub mmse: bool,
+    pub progressive_pilots: bool,
 }
 
 impl Profile {
@@ -26,8 +27,9 @@ impl Profile {
         guard_quarters: 2,
         correct_iq: false,
         mmse: false,
+        progressive_pilots: false,
     };
-    const ALL: [Self; 18] = [
+    const ALL: [Self; 19] = [
         Self {
             track_timing: false,
             pilot_alpha: 1.,
@@ -37,6 +39,7 @@ impl Profile {
             guard_quarters: 2,
             correct_iq: false,
             mmse: false,
+            progressive_pilots: false,
         },
         Self {
             track_timing: true,
@@ -47,6 +50,7 @@ impl Profile {
             guard_quarters: 2,
             correct_iq: false,
             mmse: false,
+            progressive_pilots: false,
         },
         Self {
             track_timing: false,
@@ -57,6 +61,7 @@ impl Profile {
             guard_quarters: 2,
             correct_iq: false,
             mmse: false,
+            progressive_pilots: false,
         },
         Self::TRACKED,
         Self {
@@ -136,6 +141,13 @@ impl Profile {
             boundary_metrics: true,
             correct_iq: true,
             mmse: true,
+            ..Self::TRACKED
+        },
+        Self {
+            boundary_metrics: true,
+            correct_iq: true,
+            track_timing: false,
+            progressive_pilots: true,
             ..Self::TRACKED
         },
     ];

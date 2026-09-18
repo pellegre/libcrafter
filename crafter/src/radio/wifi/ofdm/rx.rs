@@ -536,19 +536,22 @@ mod tests {
                 .unwrap_or_else(|_| panic!("{} DATA rejected", c[0]));
             assert_eq!(actual, expected, "{}", c[0]);
             assert!(valid_fcs(&actual), "{}", c[0]);
-            for (guard_quarters, common_phase, decision_iterations, mmse) in [
-                (2, false, 0, false),
-                (2, false, 3, false),
-                (1, true, 0, false),
-                (1, false, 3, false),
-                (3, true, 0, false),
-                (3, false, 3, false),
-                (2, false, 0, true),
+            for (guard_quarters, common_phase, decision_iterations, mmse, progressive_pilots) in [
+                (2, false, 0, false, false),
+                (2, false, 3, false, false),
+                (1, true, 0, false, false),
+                (1, false, 3, false, false),
+                (3, true, 0, false, false),
+                (3, false, 3, false, false),
+                (2, false, 0, true, false),
+                (2, false, 0, false, true),
             ] {
                 let profile = crate::radio::wifi::recovery::Profile {
                     boundary_metrics: true,
                     mmse,
-                    correct_iq: mmse,
+                    correct_iq: mmse || progressive_pilots,
+                    progressive_pilots,
+                    track_timing: !progressive_pilots,
                     guard_quarters,
                     common_phase,
                     decision_iterations,
