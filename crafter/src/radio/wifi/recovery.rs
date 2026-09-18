@@ -11,10 +11,11 @@ pub(in crate::radio) struct Profile {
     /// Equalized pilot sum and boundary-distance metrics without clock fitting.
     pub common_phase: bool,
     pub boundary_metrics: bool,
-    pub guard_quarters: u8,
+    pub guard_eighths: u8,
     pub correct_iq: bool,
     pub mmse: bool,
     pub progressive_pilots: bool,
+    pub early_training: u8,
 }
 
 impl Profile {
@@ -24,22 +25,24 @@ impl Profile {
         decision_iterations: 0,
         common_phase: false,
         boundary_metrics: false,
-        guard_quarters: 2,
+        guard_eighths: 4,
         correct_iq: false,
         mmse: false,
         progressive_pilots: false,
+        early_training: 0,
     };
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 22] = [
         Self {
             track_timing: false,
             pilot_alpha: 1.,
             decision_iterations: 0,
             common_phase: false,
             boundary_metrics: false,
-            guard_quarters: 2,
+            guard_eighths: 4,
             correct_iq: false,
             mmse: false,
             progressive_pilots: false,
+            early_training: 0,
         },
         Self {
             track_timing: true,
@@ -47,10 +50,11 @@ impl Profile {
             decision_iterations: 0,
             common_phase: false,
             boundary_metrics: false,
-            guard_quarters: 2,
+            guard_eighths: 4,
             correct_iq: false,
             mmse: false,
             progressive_pilots: false,
+            early_training: 0,
         },
         Self {
             track_timing: false,
@@ -58,10 +62,11 @@ impl Profile {
             decision_iterations: 0,
             common_phase: false,
             boundary_metrics: false,
-            guard_quarters: 2,
+            guard_eighths: 4,
             correct_iq: false,
             mmse: false,
             progressive_pilots: false,
+            early_training: 0,
         },
         Self::TRACKED,
         Self {
@@ -102,28 +107,28 @@ impl Profile {
             boundary_metrics: true,
             common_phase: true,
             decision_iterations: 0,
-            guard_quarters: 1,
+            guard_eighths: 2,
             ..Self::TRACKED
         },
         Self {
             boundary_metrics: true,
             common_phase: false,
             decision_iterations: 3,
-            guard_quarters: 1,
+            guard_eighths: 2,
             ..Self::TRACKED
         },
         Self {
             boundary_metrics: true,
             common_phase: true,
             decision_iterations: 0,
-            guard_quarters: 3,
+            guard_eighths: 6,
             ..Self::TRACKED
         },
         Self {
             boundary_metrics: true,
             common_phase: false,
             decision_iterations: 3,
-            guard_quarters: 3,
+            guard_eighths: 6,
             ..Self::TRACKED
         },
         Self {
@@ -148,6 +153,27 @@ impl Profile {
             correct_iq: true,
             track_timing: false,
             progressive_pilots: true,
+            ..Self::TRACKED
+        },
+        Self {
+            boundary_metrics: true,
+            early_training: 3,
+            common_phase: true,
+            guard_eighths: 2,
+            ..Self::TRACKED
+        },
+        Self {
+            boundary_metrics: true,
+            early_training: 2,
+            decision_iterations: 3,
+            guard_eighths: 4,
+            ..Self::TRACKED
+        },
+        Self {
+            boundary_metrics: true,
+            early_training: 1,
+            common_phase: true,
+            guard_eighths: 1,
             ..Self::TRACKED
         },
     ];

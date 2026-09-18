@@ -212,6 +212,20 @@ pub(in crate::radio) fn demodulate_data_profile(
     if (profile.correct_iq || profile.mmse) && stbc_second.is_some() {
         return Err(());
     }
+    let early;
+    let a = if profile.early_training != 0 {
+        if ht_guard.is_some() {
+            return Err(());
+        }
+        early = {
+            let mut shifted = a.clone();
+            shifted.channel = a.early_channel[profile.early_training as usize - 1];
+            shifted
+        };
+        &early
+    } else {
+        a
+    };
     let balanced;
     let apply_iq = profile.correct_iq && stbc_second.is_none();
     let a = if apply_iq {
@@ -278,7 +292,7 @@ pub(in crate::radio) fn demodulate_data_profile(
         // edge. Pilot slope measures accumulated clock drift in
         // samples; follow it without resampling or changing source positions.
         let advance = if profile.track_timing {
-            guard as isize * profile.guard_quarters as isize / 4
+            guard as isize * profile.guard_eighths as isize / 8
                 + (phase_slope * 64. / std::f32::consts::TAU).round() as isize
         } else {
             0
