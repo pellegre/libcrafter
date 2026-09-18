@@ -105,15 +105,30 @@ pub(in crate::radio) fn demodulate_data(
     let mut preceding = [ComplexSample::ZERO; 64];
     let (mut sum_x, mut sum_xx, mut sum_y, mut sum_xy) = (0f64, 0f64, 0f64, 0f64);
     let (mut residual_energy, mut residual_weight) = (0f64, 0f64);
-    for (symbol, samples) in samples.chunks_exact(stride).enumerate() {
+    for symbol in 0..info.data_symbols {
+        // Start the FFT inside the cyclic prefix instead of at its trailing
+        // edge. Pilot slope measures accumulated clock drift in
+        // samples; follow it without resampling or changing source positions.
+        let advance =
+            guard as isize / 2 + (phase_slope * 64. / std::f32::consts::TAU).round() as isize;
+        let nominal = symbol * stride + guard;
+        let window_start =
+            (nominal as isize - advance).clamp(0, (samples.len() - 64) as isize) as usize;
+        let actual_advance = nominal as isize - window_start as isize;
         let time = std::array::from_fn(|n| {
-            samples[guard + n].mul(ComplexSample::rotation(
+            samples[window_start + n].mul(ComplexSample::rotation(
                 -a.frequency_rad
-                    * (info.data_start + (symbol * stride + guard + n) as u64 - a.phase_origin)
-                        as f32,
+                    * (info.data_start + (window_start + n) as u64 - a.phase_origin) as f32,
             ))
         });
-        let bins = fft64(time);
+        let shifted = fft64(time);
+        // Undo the known integer window shift before pilot fitting, so its
+        // phase ramp cannot be mistaken for additional sampling-clock drift.
+        let bins: [_; 64] = std::array::from_fn(|k| {
+            shifted[k].mul(ComplexSample::rotation(
+                std::f32::consts::TAU * actual_advance as f32 * k as f32 / 64.,
+            ))
+        });
         let polarity = 1. - 2. * feedback(&mut pilot_state) as f32;
         // Sampling-clock drift is a phase slope across subcarriers, not a
         // common carrier rotation. Remove the previous slope before measuring
