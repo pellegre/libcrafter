@@ -1,9 +1,10 @@
 //! HT20 receive classification, training, coding recovery, and A-MPDU publication.
 
 use super::{ampdu, decode_iq, decode_iq_at, ldpc, train_single_stream, train_stbc_second};
+use crate::radio::wifi::recovery::{self, DecodeAttempt, Profile};
 use crate::radio::{
     wifi::ofdm::{
-        demod::{decode_data_mode_with_format, demodulate_data, descramble_psdu},
+        demod::{decode_data_profile, demodulate_data_profile, descramble_psdu},
         signal::SignalInfo,
         sync::Acquisition,
     },
@@ -289,6 +290,19 @@ impl Candidate {
         info: SignalInfo,
         start: &IqPosition,
     ) -> DecodeAttempt {
+        recovery::recover(self.aggregate(), |profile| {
+            self.decode_profile(samples, acquisition, info, start, profile)
+        })
+    }
+
+    fn decode_profile(
+        self,
+        samples: &[ComplexSample],
+        acquisition: &Acquisition,
+        info: SignalInfo,
+        start: &IqPosition,
+        profile: Profile,
+    ) -> DecodeAttempt {
         let first_end = if self.greenfield { 160 } else { 400 };
         let data_offset = (info.data_start - acquisition.signal_start) as usize;
         let trained = if self.greenfield {
@@ -316,7 +330,7 @@ impl Candidate {
                 (a, None)
             };
             if let Some(layout) = self.ldpc {
-                let (coded, tracking) = demodulate_data(
+                let (coded, tracking) = demodulate_data_profile(
                     &samples[data_offset..],
                     &a,
                     info,
@@ -328,6 +342,7 @@ impl Candidate {
                     false,
                     self.greenfield,
                     second.as_ref(),
+                    profile,
                 )?;
                 let (bits, iterations) = if self.fields.aggregation {
                     let recovered = layout.recover_partial(&coded, 64).map_err(|error| {
@@ -365,7 +380,7 @@ impl Candidate {
                 });
                 return Ok((descramble_psdu(bits, info.psdu_bytes)?, tracking));
             }
-            decode_data_mode_with_format(
+            decode_data_profile(
                 &samples[data_offset..],
                 &a,
                 info,
@@ -376,6 +391,7 @@ impl Candidate {
                 }),
                 self.greenfield,
                 second.as_ref(),
+                profile,
             )
         });
 
@@ -413,15 +429,9 @@ impl Candidate {
             output_diagnostics: partial_stats,
             frame_diagnostics,
             failure_diagnostics,
+            aggregate_members: None,
         }
     }
-}
-
-pub(in crate::radio) struct DecodeAttempt {
-    pub decoded: Result<(Vec<u8>, PhyDiagnostic), ()>,
-    pub output_diagnostics: Vec<PhyDiagnostic>,
-    pub frame_diagnostics: Vec<PhyDiagnostic>,
-    pub failure_diagnostics: Vec<PhyDiagnostic>,
 }
 
 pub(in crate::radio) struct AggregateCounts {
@@ -433,6 +443,7 @@ pub(in crate::radio) fn publish_aggregate(
     mut frame: RecoveredFrame,
     limit: usize,
     out: &mut DecodeOutput,
+    members: Option<&[std::ops::Range<usize>]>,
 ) -> RadioResult<AggregateCounts> {
     let bytes = std::mem::take(&mut frame.bytes);
     let scan =
@@ -443,7 +454,21 @@ pub(in crate::radio) fn publish_aggregate(
         })?;
     let (mut delimiters, mut fcs, mut truncated, mut oversized) = (0, 0, 0, 0);
     let mut valid_frames = 0u64;
-    for event in scan {
+    let verified = members.into_iter().flatten().map(|range| {
+        // Ranges originate in Scan and are retained only across equal-length
+        // PSDUs. Their complete checked delimiter and MPDU bytes stay intact.
+        let member = &bytes[range.clone()];
+        let delimiter = ampdu::Delimiter::decode(&member[..4]).unwrap();
+        ampdu::Event::Frame {
+            delimiter_offset: range.start,
+            control_bits: delimiter.control_bits,
+            bytes: &member[4..],
+        }
+    });
+    for event in scan
+        .filter(|event| members.is_none() || !matches!(event, ampdu::Event::Frame { .. }))
+        .chain(verified)
+    {
         match event {
             ampdu::Event::Frame {
                 delimiter_offset,

@@ -79,13 +79,14 @@ impl LegacyOfdmDecoder {
         frame: RecoveredFrame,
         aggregate: bool,
         out: &mut DecodeOutput,
+        members: Option<&[std::ops::Range<usize>]>,
     ) -> RadioResult<()> {
         let limit = self
             .output_allowance
             .unwrap_or(frame.config.max_pending_frames)
             .min(frame.config.max_pending_frames);
         if aggregate {
-            let counts = ht::rx::publish_aggregate(frame, limit, out)?;
+            let counts = ht::rx::publish_aggregate(frame, limit, out, members)?;
             self.stats.valid_frames = self.stats.valid_frames.saturating_add(counts.valid_frames);
             self.stats.invalid_fcs = self.stats.invalid_fcs.saturating_add(counts.invalid_fcs);
         } else if valid_fcs(&frame.bytes) {
@@ -272,7 +273,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 {
                     let p = self.pending[slot].take().unwrap();
                     let info = p.info.unwrap();
-                    let (decoded, frame_diagnostics, failure_diagnostics, aggregate) =
+                    let (decoded, frame_diagnostics, failure_diagnostics, aggregate, members) =
                         if let Some(candidate) = p.ht {
                             let aggregate = candidate.aggregate();
                             let attempt =
@@ -283,13 +284,16 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 attempt.frame_diagnostics,
                                 attempt.failure_diagnostics,
                                 aggregate,
+                                attempt.aggregate_members,
                             )
                         } else {
+                            let attempt = decode_data(&p.samples[80..], &p.acquisition, info);
                             (
-                                decode_data(&p.samples[80..], &p.acquisition, info),
-                                Vec::new(),
-                                Vec::new(),
+                                attempt.decoded,
+                                attempt.frame_diagnostics,
+                                attempt.failure_diagnostics,
                                 false,
+                                None,
                             )
                         };
                     match decoded {
@@ -314,7 +318,9 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 rate_bps: info.rate_bps,
                                 diagnostics,
                             };
-                            if let Err(error) = self.publish_psdu(frame, aggregate, &mut out) {
+                            if let Err(error) =
+                                self.publish_psdu(frame, aggregate, &mut out, members.as_deref())
+                            {
                                 self.reset(ResetReason::Explicit);
                                 return Err(error);
                             }
@@ -370,6 +376,41 @@ impl PhyDecoder for LegacyOfdmDecoder {
 mod tests {
     use super::*;
     use std::time::Duration;
+    #[test]
+    fn radio_aggregate_recovery_publishes_only_verified_member_ranges() {
+        let mut decoded = feed(
+            &mut WifiDecoder::new(),
+            include_bytes!("../../../../tests/fixtures/iq/ht-bcc-0-gi800-len100-clean.cs8"),
+            127,
+        );
+        let mut frame = decoded.frames.remove(0);
+        let fields: Vec<_> = include_str!("../../../../tests/fixtures/iq/ampdu-index.tsv")
+            .lines()
+            .nth(1)
+            .unwrap()
+            .split('\t')
+            .collect();
+        let hex = |text: &str| {
+            text.as_bytes()
+                .chunks_exact(2)
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect::<Vec<_>>()
+        };
+        frame.bytes = hex(fields[1]);
+        let offsets: Vec<usize> = fields[2].split(',').map(|v| v.parse().unwrap()).collect();
+        let expected: Vec<_> = fields[3].split(',').map(hex).collect();
+        // Select a later member: an earlier valid-looking frame must neither
+        // be published nor hide the explicitly verified original offset.
+        let ranges = [offsets[1] - 4..offsets[1] + expected[1].len()];
+        let mut out = DecodeOutput::default();
+        let counts = ht::rx::publish_aggregate(frame, 1, &mut out, Some(&ranges)).unwrap();
+        assert_eq!(counts.valid_frames, 1);
+        assert_eq!(out.frames.len(), 1);
+        assert_eq!(out.frames[0].bytes, expected[1]);
+        assert!(out.frames[0].diagnostics.iter().any(|d| matches!(d,
+            PhyDiagnostic::Ampdu { delimiter_offset, .. } if *delimiter_offset == offsets[1] - 4)));
+    }
+
     #[test]
     fn radio_ht_bcc_independent_payload_kernel() {
         use sha2::{Digest, Sha256};

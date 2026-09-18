@@ -69,6 +69,11 @@ pub enum PhyDiagnostic {
         pilot_residual_rms_rad: f32,
         data_symbols: usize,
     },
+    /// Bounded DATA hypotheses tried for one PPDU. Valid MPDUs retain their
+    /// first successful decoding when aggregate members use different attempts.
+    OfdmRecovery {
+        attempts: u8,
+    },
     Ofdm {
         frequency_offset_hz: f32,
         training_correlation: f32,
@@ -175,6 +180,7 @@ impl PartialEq for PhyDiagnostic {
                 },
             ) => a.map(f32::to_bits) == d.map(f32::to_bits) && b.to_bits() == e.to_bits() && c == f,
             (Self::Reset(a), Self::Reset(b)) => a == b,
+            (Self::OfdmRecovery { attempts: a }, Self::OfdmRecovery { attempts: b }) => a == b,
             (
                 Self::Ofdm {
                     frequency_offset_hz: a,

@@ -3,7 +3,7 @@
 //! so a false delimiter cannot hide a later valid MPDU inside its stated span.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio::wifi) enum Error {
     AggregateLength { limit: usize, available: usize },
     TruncatedDelimiter { required: usize, available: usize },
     Signature { received: u8 },
@@ -47,7 +47,7 @@ impl Delimiter {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Event<'a> {
+pub(in crate::radio::wifi) enum Event<'a> {
     Frame {
         delimiter_offset: usize,
         control_bits: u8,
@@ -61,14 +61,14 @@ pub(super) enum Event<'a> {
         error: Error,
     },
 }
-pub(super) struct Scan<'a> {
+pub(in crate::radio::wifi) struct Scan<'a> {
     bytes: &'a [u8],
     offset: usize,
     max_mpdu: usize,
     pending: Option<Event<'a>>,
 }
 impl<'a> Scan<'a> {
-    pub(super) fn new(bytes: &'a [u8], max_mpdu: usize) -> Result<Self, Error> {
+    pub(in crate::radio::wifi) fn new(bytes: &'a [u8], max_mpdu: usize) -> Result<Self, Error> {
         if bytes.len() > 65535 {
             return Err(Error::AggregateLength {
                 limit: 65535,
