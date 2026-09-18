@@ -487,6 +487,55 @@ mod tests {
         Ok(result)
     }
     #[test]
+    fn radio_false_short_preamble_does_not_hide_following_frame() {
+        let mut fixtures: Vec<_> = [6, 9, 12, 18, 24, 36, 48, 54]
+            .into_iter()
+            .map(|rate| format!("ofdm-{rate}-clean"))
+            .collect();
+        fixtures.extend((0..8).map(|mcs| format!("ht-bcc-{mcs}-gi800-len100-clean")));
+        for name in fixtures {
+            let original = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let baseline = feed(&mut WifiDecoder::new(), &original, 127);
+            assert_eq!(baseline.frames.len(), 1, "{name}");
+            let expected = &baseline.frames[0];
+            for (tone_samples, gap_samples) in [(80, 16), (96, 32), (128, 64)] {
+                let mut bytes = Vec::new();
+                for n in 0..tone_samples {
+                    let angle = -std::f32::consts::TAU * 200_000. * n as f32 / 20_000_000.;
+                    bytes.push((48. * angle.cos()).round() as i8 as u8);
+                    bytes.push((48. * angle.sin()).round() as i8 as u8);
+                }
+                bytes.resize(bytes.len() + 2 * gap_samples, 0);
+                let prefix = bytes.len() / 2;
+                bytes.extend_from_slice(&original);
+                for chunk in [1, 127, 4096] {
+                    let recovered = feed(&mut WifiDecoder::new(), &bytes, chunk);
+                    assert_eq!(
+                        recovered.frames.len(),
+                        1,
+                        "{name}, tone={tone_samples}, gap={gap_samples}, chunk={chunk}"
+                    );
+                    let frame = &recovered.frames[0];
+                    assert_eq!(frame.bytes, expected.bytes, "{name}");
+                    assert_eq!(
+                        frame.start.sample_index,
+                        expected.start.sample_index + prefix as u64,
+                        "{name}"
+                    );
+                    assert_eq!(
+                        frame.end_sample_index,
+                        expected.end_sample_index + prefix as u64,
+                        "{name}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
     fn radio_ht_extension_training_streaming_independent_iq() {
         let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/ht-extension-index.tsv")
             .lines()
