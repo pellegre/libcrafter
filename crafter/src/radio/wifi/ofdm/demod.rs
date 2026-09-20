@@ -647,7 +647,7 @@ pub(in crate::radio) fn valid_fcs(bytes: &[u8]) -> bool {
     (!crc).to_le_bytes() == bytes[bytes.len() - 4..]
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests {
     use super::*;
 

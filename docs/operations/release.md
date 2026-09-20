@@ -25,6 +25,18 @@ cargo publish -p crafter --dry-run --locked
 The dry run must pass before any crates.io upload. It does not publish the
 crate.
 
+The published archive excludes the large IQ corpus and its integration tests
+to stay within the crates.io upload limit. Fixture-dependent radio unit tests
+run from source checkouts; Cargo's generated `.cargo_vcs_info.json` identifies
+packaged sources where those tests are omitted. The radio library, examples,
+and tests that do not need the corpus remain available in the package.
+
+Run the full radio suite from the release checkout before publishing:
+
+```sh
+cargo test -p crafter --release --features radio --all-targets --locked
+```
+
 ## Crates.io Upload
 
 Use one of the guarded maintainer paths for the real upload:

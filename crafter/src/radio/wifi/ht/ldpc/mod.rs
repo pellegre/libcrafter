@@ -203,7 +203,7 @@ impl Code {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests {
     use super::*;
     #[test]

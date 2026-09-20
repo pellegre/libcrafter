@@ -91,6 +91,8 @@ inspect_package_contents() {
   )
 
   [[ -f "$crate_file" ]] || die "package archive not found: $crate_file"
+  [[ "$(stat -c %s "$crate_file")" -le 10485760 ]] ||
+    die "package exceeds the crates.io 10 MiB upload limit"
 
   tmp_dir="$(mktemp -d)"
   temp_paths+=("$tmp_dir")

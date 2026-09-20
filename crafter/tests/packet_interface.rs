@@ -1,6 +1,6 @@
 //! Deterministic normalized interface contracts using synthetic capture bytes.
 
-#[cfg(feature = "radio")]
+#[cfg(all(feature = "radio", not(crafter_packaged)))]
 #[path = "packet_interface/fixtures.rs"]
 mod interface_fixtures;
 

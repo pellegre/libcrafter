@@ -209,7 +209,7 @@ pub(in crate::radio) fn decode_iq_at(
     HtSignalFields::decode_interleaved(&metrics).ok()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests {
     use super::*;
 

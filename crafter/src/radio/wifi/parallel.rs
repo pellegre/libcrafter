@@ -522,7 +522,7 @@ impl PhyDecoder for ParallelWifiDecoder {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests {
     use super::*;
     use crate::radio::transport::{IqPosition, StreamEnd};

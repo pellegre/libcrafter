@@ -474,7 +474,7 @@ impl Synchronizer {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests {
     use super::*;
     use crate::radio::{GapReason, IqPosition, RxConfig, SampleLoss};
