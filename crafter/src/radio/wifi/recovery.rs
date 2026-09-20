@@ -297,7 +297,7 @@ pub(in crate::radio) fn recover(
     result
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests {
     use super::*;
 

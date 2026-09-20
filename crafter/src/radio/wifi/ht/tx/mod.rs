@@ -7,5 +7,5 @@ mod waveform;
 pub use config::{HtCoding, HtFormat, HtGuardInterval, HtMcs, HtTxConfig};
 pub use encoder::{HtSignalBits, HtTransmission};
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests;

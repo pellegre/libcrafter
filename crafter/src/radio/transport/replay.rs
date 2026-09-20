@@ -162,7 +162,7 @@ impl<R: Read> IqSource for ReaderIqSource<R> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests {
     use super::*;
     fn config(size: usize) -> RxConfig {

@@ -77,7 +77,7 @@ pub(in crate::radio) fn recover_pair(
     ])
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests {
     use super::*;
 

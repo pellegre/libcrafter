@@ -11,6 +11,16 @@ documentation.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
+exclude = [
+    "/tests/fixtures/iq/",
+    "/tests/fixture_suite.rs",
+    "/tests/packet_interface/fixtures.rs",
+    "/tests/radio_dsss_vectors.rs",
+    "/tests/radio_interference.rs",
+    "/tests/radio_parallel.rs",
+    "/tests/radio_tx_vectors.rs",
+    "/tests/radio_vectors.rs",
+]
 
 [lib]
 path = "src/lib.rs"

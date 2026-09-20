@@ -252,7 +252,7 @@ fn decode_signal_profile(
     parse_bits(&bits, max_bytes, acquisition.signal_start)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests {
     use super::*;
     use crate::radio::wifi::ofdm::sync::{SyncEvent, Synchronizer};

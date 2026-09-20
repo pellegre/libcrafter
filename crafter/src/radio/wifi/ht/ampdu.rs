@@ -163,7 +163,7 @@ impl<'a> Iterator for Scan<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(crafter_packaged)))]
 mod tests {
     use super::*;
     fn hex(value: &str) -> Vec<u8> {

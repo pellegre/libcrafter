@@ -1,4 +1,12 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Cargo adds this file to published archives, which omit the large IQ
+    // corpus. Source checkouts always compile the fixture-dependent tests.
+    println!("cargo:rustc-check-cfg=cfg(crafter_packaged)");
+    println!("cargo:rerun-if-changed=.cargo_vcs_info.json");
+    if std::path::Path::new(".cargo_vcs_info.json").is_file() {
+        println!("cargo:rustc-cfg=crafter_packaged");
+    }
+
     #[cfg(feature = "whad")]
     generate_whad_proto()?;
 
