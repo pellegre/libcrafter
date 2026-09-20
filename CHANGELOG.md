@@ -2,12 +2,16 @@
 
 ## Unreleased
 
+## 0.3.5 - 2026-09-20
+
 ### Changed
 
-- Remove repository-owned endpoint, appliance, lab, provider, credential, SSH,
-  VM, container, peer-service, and topology orchestration. Deterministic oracle
-  validation, substrate-independent probe plans, and bounded packet executors
-  remain in libcrafter; external operator tooling owns hardware-backed runs.
+- Add CoAP datagram and reliable-transport layers, typed options, blockwise and Observe helpers, discovery formats, and OSCORE packet protection with independent validation.
+- Add interchangeable monitor and SDR packet interfaces, bounded IQ replay and HackRF backends, and legacy Wi-Fi and HT20 receive/transmit support with BCC, LDPC, aggregation, and parallel decoding.
+- Improve legacy OFDM and HT20 reception under weak training, clock drift, pilot interference, and quadrature imbalance; preserve integrity-valid packets across bounded recovery attempts.
+- Update cryptographic and SIMD dependencies and require Rust 1.89 or newer.
+- Keep the large IQ fixture corpus and its dependent tests in source checkouts while publishing the complete radio library and examples within the crates.io package size limit.
+- Remove repository-owned infrastructure orchestration; retain deterministic oracle validation, substrate-independent probe plans, and bounded packet executors.
 
 ## 0.3.4 - 2026-07-12
 

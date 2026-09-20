@@ -12,7 +12,12 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 exclude = [
-    "/tests/fixtures/iq/",
+    "/tests/fixtures/iq/*",
+    "!/tests/fixtures/iq/ofdm-6-clean.cs8",
+    "!/tests/fixtures/iq/ht-greenfield-7-ldpc-len100-clean.cs8",
+    "!/tests/fixtures/iq/ht-stbc-7-ldpc-gf-gi800-len100-clean.cs8",
+    "!/tests/fixtures/iq/ht-extension-7-ldpc-gf-gi800-stbc1-ess2-len100-clean.cs8",
+    "!/tests/fixtures/iq/ht-ampdu-7-gi800-ldpc-duplicate.cs8",
     "/tests/fixture_suite.rs",
     "/tests/packet_interface/fixtures.rs",
     "/tests/radio_dsss_vectors.rs",
