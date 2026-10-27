@@ -2,7 +2,7 @@
 
 mod config;
 mod encoder;
-mod waveform;
+pub(in crate::radio) mod waveform;
 
 pub use config::{HtCoding, HtFormat, HtGuardInterval, HtMcs, HtTxConfig};
 pub use encoder::{HtSignalBits, HtTransmission};

@@ -101,6 +101,12 @@ pub(in crate::radio) fn constellation(bits: &[u8]) -> Complex {
                     * (4 - (2 * bits[1] as i32 - 1) * (3 - 2 * bits[2] as i32)))
                     as f64
             }
+            4 => {
+                ((2 * bits[0] as i32 - 1)
+                    * (8 - (2 * bits[1] as i32 - 1)
+                        * (4 - (2 * bits[2] as i32 - 1) * (3 - 2 * bits[3] as i32))))
+                    as f64
+            }
             _ => unreachable!(),
         }
     }
@@ -109,6 +115,7 @@ pub(in crate::radio) fn constellation(bits: &[u8]) -> Complex {
         2 => SQRT_2,
         4 => 10.0f64.sqrt(),
         6 => 42.0f64.sqrt(),
+        8 => 170.0f64.sqrt(),
         _ => unreachable!(),
     };
     Complex {

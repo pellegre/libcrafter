@@ -1,6 +1,6 @@
 //! HT20 receive classification, training, coding recovery, and A-MPDU publication.
 
-use super::{ampdu, decode_iq, decode_iq_at, ldpc, train_single_stream, train_stbc_second};
+use super::{decode_iq, decode_iq_at, ldpc, train_single_stream, train_stbc_second};
 use crate::radio::wifi::recovery::{self, DecodeAttempt, Profile};
 use crate::radio::{
     wifi::ofdm::{
@@ -8,8 +8,7 @@ use crate::radio::{
         signal::SignalInfo,
         sync::Acquisition,
     },
-    ComplexSample, DecodeOutput, HtSignalFields, IqPosition, PhyDiagnostic, RadioError,
-    RadioResult, RecoveredFrame, RxConfig,
+    ComplexSample, HtSignalFields, IqPosition, PhyDiagnostic, RxConfig,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -432,87 +431,6 @@ impl Candidate {
             aggregate_members: None,
         }
     }
-}
-
-pub(in crate::radio) struct AggregateCounts {
-    pub valid_frames: u64,
-    pub invalid_fcs: u64,
-}
-
-pub(in crate::radio) fn publish_aggregate(
-    mut frame: RecoveredFrame,
-    limit: usize,
-    out: &mut DecodeOutput,
-    members: Option<&[std::ops::Range<usize>]>,
-) -> RadioResult<AggregateCounts> {
-    let bytes = std::mem::take(&mut frame.bytes);
-    let scan =
-        ampdu::Scan::new(&bytes, frame.config.max_frame_bytes).map_err(|_| RadioError::Limit {
-            context: "HT aggregate bytes",
-            limit: 65535,
-            actual: bytes.len() as u64,
-        })?;
-    let (mut delimiters, mut fcs, mut truncated, mut oversized) = (0, 0, 0, 0);
-    let mut valid_frames = 0u64;
-    let verified = members.into_iter().flatten().map(|range| {
-        // Ranges originate in Scan and are retained only across equal-length
-        // PSDUs. Their complete checked delimiter and MPDU bytes stay intact.
-        let member = &bytes[range.clone()];
-        let delimiter = ampdu::Delimiter::decode(&member[..4]).unwrap();
-        ampdu::Event::Frame {
-            delimiter_offset: range.start,
-            control_bits: delimiter.control_bits,
-            bytes: &member[4..],
-        }
-    });
-    for event in scan
-        .filter(|event| members.is_none() || !matches!(event, ampdu::Event::Frame { .. }))
-        .chain(verified)
-    {
-        match event {
-            ampdu::Event::Frame {
-                delimiter_offset,
-                control_bits,
-                bytes,
-            } => {
-                if out.frames.len() >= limit {
-                    return Err(RadioError::Limit {
-                        context: "HT aggregate pending frames",
-                        limit: limit as u64,
-                        actual: (out.frames.len() + 1) as u64,
-                    });
-                }
-                let mut recovered = frame.clone();
-                recovered.bytes = bytes.to_vec();
-                recovered.diagnostics.push(PhyDiagnostic::Ampdu {
-                    delimiter_offset,
-                    control_bits,
-                });
-                out.frames.push(recovered);
-                valid_frames = valid_frames.saturating_add(1);
-            }
-            ampdu::Event::Empty { .. } => {}
-            ampdu::Event::Invalid { error, .. } => match error {
-                ampdu::Error::BadFcs => fcs += 1,
-                ampdu::Error::TruncatedMpdu { .. } => truncated += 1,
-                ampdu::Error::MpduLimit { .. } => oversized += 1,
-                _ => delimiters += 1,
-            },
-        }
-    }
-    if delimiters + fcs + truncated + oversized != 0 {
-        out.diagnostics.push(PhyDiagnostic::AmpduErrors {
-            preamble_sample_index: frame.start.sample_index,
-            invalid_delimiters: delimiters,
-            invalid_fcs: fcs,
-            truncated_mpdus: truncated,
-            oversized_mpdus: oversized,
-        });
-    }
-    Ok(AggregateCounts {
-        valid_frames,
-        invalid_fcs: fcs as u64,
-    })
 }
 
 fn header_diagnostics(

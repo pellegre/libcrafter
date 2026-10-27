@@ -196,6 +196,18 @@ impl Layout {
         }
         let group = if stbc { 2 } else { 1 };
         let payload = 8 * usize::from(bytes) + 16;
+        Ok(Self::from_payload(payload, coded, rate, group))
+    }
+
+    /// Shared codeword selection over a PHY's complete information bit count.
+    /// Dimensions are validated by the enclosing PHY before this primitive.
+    pub(in crate::radio) fn from_payload(
+        payload: usize,
+        coded: usize,
+        rate: Rate,
+        group: usize,
+    ) -> Self {
+        let (num, den) = rate.ratio();
         let mut available = coded * group * payload.div_ceil(coded * num / den * group);
         let original = available;
         let threshold = |constant| available * den >= payload * den + constant * (den - num);
@@ -216,7 +228,7 @@ impl Layout {
             puncture = (count * size).saturating_sub(available + short);
         }
         let repeat = available.saturating_sub(parity + payload);
-        Ok(Self {
+        Self {
             symbols: available / coded,
             codewords: count,
             block_bits: size,
@@ -227,7 +239,7 @@ impl Layout {
             payload_bits: payload,
             coded_bits_per_symbol: coded,
             rate,
-        })
+        }
     }
     pub(in crate::radio) fn word(self, index: usize) -> Option<Word> {
         if index >= self.codewords {

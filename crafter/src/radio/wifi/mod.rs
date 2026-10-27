@@ -1,5 +1,6 @@
 //! IEEE 802.11 PHY decoding and transmission policy.
 
+mod ampdu;
 mod decoder;
 mod dsss;
 pub(in crate::radio) mod ht;
@@ -33,5 +34,5 @@ pub use windowed::{WindowedLegacyWifiDecoder, WindowedWifiDecoder};
 
 pub use vht::{
     VhtCoding, VhtGuardInterval, VhtMcs, VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content,
-    VhtSignalB20Fields, VhtSignalError, VhtTxConfig,
+    VhtSignalB20Fields, VhtSignalBits, VhtSignalError, VhtTransmission, VhtTxConfig,
 };

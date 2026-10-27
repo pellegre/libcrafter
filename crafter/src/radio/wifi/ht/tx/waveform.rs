@@ -24,7 +24,7 @@ pub(super) fn puncture(coded: &[u8], mcs: HtMcs) -> Vec<u8> {
         .collect()
 }
 
-pub(super) fn ht_interleave(bits: &[u8], bits_per_subcarrier: usize) -> Vec<u8> {
+pub(in crate::radio) fn ht_interleave(bits: &[u8], bits_per_subcarrier: usize) -> Vec<u8> {
     let rows = 4 * bits_per_subcarrier;
     let columns = 13;
     let mut first = vec![0; bits.len()];
@@ -60,7 +60,7 @@ fn ifft57(frequency: &[Complex; 57]) -> [Complex; 64] {
     })
 }
 
-pub(super) fn ht_training() -> [Complex; 64] {
+pub(in crate::radio) fn ht_training() -> [Complex; 64] {
     let mut frequency = [Complex::ZERO; 57];
     frequency[0].re = 1.0;
     frequency[1].re = 1.0;
@@ -72,7 +72,7 @@ pub(super) fn ht_training() -> [Complex; 64] {
     ifft57(&frequency)
 }
 
-pub(super) fn ht_signal_symbol(bits: &[u8]) -> Vec<Complex> {
+pub(in crate::radio) fn ht_signal_symbol(bits: &[u8]) -> Vec<Complex> {
     let mut frequency = [Complex::ZERO; 53];
     for (index, carrier) in DATA_CARRIERS[2..50].iter().enumerate() {
         frequency[(*carrier + 26) as usize].im = (2 * bits[index] as i32 - 1) as f64;
@@ -87,7 +87,7 @@ pub(super) fn ht_signal_symbol(bits: &[u8]) -> Vec<Complex> {
     output
 }
 
-pub(super) fn ht_data_symbol(
+pub(in crate::radio) fn ht_data_symbol(
     bits: &[u8],
     bits_per_subcarrier: usize,
     polarity: i8,

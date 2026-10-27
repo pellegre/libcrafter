@@ -7,14 +7,15 @@ use super::super::{
 use super::dsss::DsssCckDecoder;
 use super::ofdm::{DecoderStats, LegacyOfdmDecoder};
 
-/// Combined legacy and HT20 one-stream BCC/LDPC receiver.
+/// Combined legacy, HT20 and VHT20 one-stream BCC/LDPC receiver.
 ///
 /// HT MCS 0–7, BCC and LDPC, valid long/short guard intervals, mixed and
 /// greenfield formats, nonaggregated PSDUs, A-MPDUs, one-data-stream STBC and
 /// extension training are supported. `max_frame_bytes` bounds each MPDU;
 /// `max_pending_frames` must accommodate the returned MPDUs plus two reserved
 /// child slots. Overflow is an explicit error, never a truncated aggregate.
-/// Additional data streams, HT40, VHT, HE and EHT are not decoded. This
+/// VHT20 SU supports MCS0–8, BCC/LDPC and both guard intervals without STBC.
+/// Additional data streams, HT40, VHT40/80/160, HE and EHT are not decoded. This
 /// implements the same `PhyDecoder` packet-source interface and shares the
 /// bounds and output ordering of `LegacyWifiDecoder`.
 pub struct WifiDecoder {

@@ -40,6 +40,11 @@ pub enum WifiPhy {
         greenfield: bool,
         ldpc: bool,
     },
+    Vht20 {
+        mcs: u8,
+        short_guard: bool,
+        ldpc: bool,
+    },
 }
 
 /// Requested configuration. Monitor channel preparation remains external.
@@ -140,10 +145,11 @@ impl WifiInterfaceConfig {
                 greenfield,
                 ..
             } if mcs <= 7 && !(short_guard && greenfield) => (),
+            WifiPhy::Vht20 { mcs, .. } if mcs <= 8 => (),
             _ => {
                 return Err(unsupported(
                     "transmit PHY",
-                    "requires supported legacy rate or single-stream HT20 MCS 0 through 7",
+                    "requires a supported legacy, HT20 or VHT20 single-stream PHY",
                 ))
             }
         }
@@ -168,6 +174,19 @@ impl WifiInterfaceConfig {
                 (u8::from(short_guard) << 2) | (u8::from(greenfield) << 3) | (u8::from(ldpc) << 4),
                 mcs,
             ]),
+            WifiPhy::Vht20 {
+                mcs,
+                short_guard,
+                ldpc,
+            } => {
+                let mut vht = [0; 12];
+                vht[..2].copy_from_slice(&0x00c5u16.to_le_bytes());
+                vht[2] = u8::from(short_guard) << 2;
+                vht[4] = (mcs << 4) | 1;
+                vht[8] = u8::from(ldpc);
+                vht[9] = 63;
+                Radiotap::new().vht(vht)
+            }
         }
     }
 }
@@ -675,6 +694,24 @@ fn default_encoder(phy: WifiPhy) -> crate::radio::RadioResult<crate::radio::Wifi
             config.coding = if ldpc { HtCoding::Ldpc } else { HtCoding::Bcc };
             WifiPacketEncoder::Ht20(config)
         }
+        WifiPhy::Vht20 {
+            mcs,
+            short_guard,
+            ldpc,
+        } => {
+            let config = VhtTxConfig::new(VhtMcs::try_from(mcs)?)
+                .with_guard_interval(if short_guard {
+                    VhtGuardInterval::Short
+                } else {
+                    VhtGuardInterval::Long
+                })
+                .with_coding(if ldpc {
+                    VhtCoding::Ldpc
+                } else {
+                    VhtCoding::Bcc
+                });
+            WifiPacketEncoder::Vht20(config)
+        }
     })
 }
 
@@ -696,6 +733,11 @@ fn encoder_phy(encoder: &crate::radio::WifiPacketEncoder) -> WifiPhy {
             short_guard: config.guard_interval == HtGuardInterval::Short,
             greenfield: config.format == HtFormat::Greenfield,
             ldpc: config.coding == HtCoding::Ldpc,
+        },
+        WifiPacketEncoder::Vht20(config) => WifiPhy::Vht20 {
+            mcs: config.mcs.index(),
+            short_guard: config.guard_interval == VhtGuardInterval::Short,
+            ldpc: config.coding == VhtCoding::Ldpc,
         },
     }
 }

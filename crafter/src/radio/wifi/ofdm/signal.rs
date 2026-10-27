@@ -17,7 +17,7 @@ pub struct SignalInfo {
     pub end_sample_index: u64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SignalError {
+pub(in crate::radio) enum SignalError {
     Truncated { required: usize, available: usize },
     UnsupportedRate,
     Reserved,
@@ -163,7 +163,7 @@ fn decode_bcc_end<const N: usize>(coded: &[[f32; 2]; N], terminated: bool) -> [u
     bits
 }
 
-pub(super) fn decode_signal(
+pub(in crate::radio) fn decode_signal(
     samples: &[ComplexSample],
     acquisition: &Acquisition,
     max_bytes: usize,

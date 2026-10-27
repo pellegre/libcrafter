@@ -36,8 +36,8 @@ pub use wifi::{
     LegacyWifiDecoder, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, OfdmSignalFields,
     ParallelLegacyWifiDecoder, ParallelWifiDecoder, SignalInfo, VhtCoding, VhtGuardInterval,
     VhtMcs, VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content, VhtSignalB20Fields,
-    VhtSignalError, VhtTxConfig, WifiDecoder, WifiFcsPolicy, WifiPacketEncoder, WifiTxEncoder,
-    WindowedLegacyWifiDecoder, WindowedWifiDecoder,
+    VhtSignalBits, VhtSignalError, VhtTransmission, VhtTxConfig, WifiDecoder, WifiFcsPolicy,
+    WifiPacketEncoder, WifiTxEncoder, WindowedLegacyWifiDecoder, WindowedWifiDecoder,
 };
 
 /// Compatibility facade for the deterministic in-memory sample sink.

@@ -110,3 +110,63 @@ fn vht20_one_stream_rate_boundaries() {
     }
     assert_eq!(VhtTxConfig::new(VhtMcs::Mcs0).coding, VhtCoding::Bcc);
 }
+
+#[test]
+fn packet_encoder_preserves_mac_and_explicit_wire_overrides() {
+    use crate::{
+        prelude::*,
+        radio::{PacketEncoder, RadioError},
+    };
+    let packet = Dot11::data() / Raw::from("VHT offline payload");
+    let record = PacketRecord::new(packet);
+    let mac = record.packet().compile().unwrap();
+    for mcs in VhtMcs::ALL {
+        for coding in [VhtCoding::Bcc, VhtCoding::Ldpc] {
+            for guard in [VhtGuardInterval::Long, VhtGuardInterval::Short] {
+                let config = VhtTxConfig::new(mcs)
+                    .with_coding(coding)
+                    .with_guard_interval(guard);
+                let tx = config.encode_packet(&record).unwrap();
+                assert_eq!(tx.mac_bytes, mac.as_bytes());
+                assert_eq!(
+                    tx.sample_count(),
+                    tx.leading_samples + 800 + tx.data_samples + tx.trailing_samples
+                );
+                assert!(tx
+                    .mpdu_bytes
+                    .ends_with(&super::super::ofdm::waveform::crc32(mac.as_bytes()).to_le_bytes()));
+                assert_eq!(&tx.psdu_bytes[4..4 + tx.mpdu_bytes.len()], tx.mpdu_bytes);
+                assert_eq!(tx.signal_a.transmitted, tx.signal_a.derived);
+                assert_eq!(tx.signal_b.transmitted, tx.signal_b.derived);
+                let sig = VhtSignalAFields::decode(&tx.signal_a.transmitted).unwrap();
+                assert_eq!(sig.short_guard_interval, guard == VhtGuardInterval::Short);
+            }
+        }
+    }
+    let mut config = VhtTxConfig::new(VhtMcs::Mcs3).with_fcs(WifiFcsPolicy::Explicit([1, 2, 3, 4]));
+    config.signal_a_override = Some([0; 48]);
+    config.signal_b_override = Some([0; 26]);
+    config.legacy_signal_override = Some([0; 24]);
+    let tx = config.encode_packet(&record).unwrap();
+    assert!(tx.mpdu_bytes.ends_with(&[1, 2, 3, 4]));
+    assert_eq!(tx.signal_a.transmitted, [0; 48]);
+    assert_eq!(tx.signal_b.transmitted, [0; 26]);
+    assert_eq!(tx.legacy_signal.transmitted, [0; 24]);
+    assert!(
+        tx.signal_a.explicit
+            && tx.signal_b.explicit
+            && tx.legacy_signal.explicit
+            && tx.explicit_fcs
+    );
+    config.max_samples = 1;
+    assert!(matches!(
+        config.encode_packet(&record),
+        Err(RadioError::Limit { .. })
+    ));
+    config.max_samples = usize::MAX;
+    config.leading_samples = usize::MAX;
+    assert!(matches!(
+        config.encode_packet(&record),
+        Err(RadioError::Overflow { .. })
+    ));
+}

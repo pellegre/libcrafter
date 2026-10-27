@@ -1,5 +1,5 @@
 //! Bounded DATA retries; integrity-valid bytes always retain their first result.
-use super::{ht::ampdu, ofdm::demod::valid_fcs};
+use super::{ampdu, ofdm::demod::valid_fcs};
 use crate::radio::PhyDiagnostic;
 use std::ops::Range;
 
@@ -201,8 +201,12 @@ impl DecodeAttempt {
     }
 }
 
-fn members(bytes: &[u8]) -> (Vec<Range<usize>>, bool) {
-    let Ok(scan) = ampdu::Scan::new(bytes, 4095) else {
+fn members(bytes: &[u8], vht: bool) -> (Vec<Range<usize>>, bool) {
+    let Ok(scan) = (if vht {
+        ampdu::Scan::vht(bytes, 16383)
+    } else {
+        ampdu::Scan::new(bytes, 4095)
+    }) else {
         return (Vec::new(), false);
     };
     let mut ranges = Vec::new();
@@ -230,6 +234,16 @@ fn members(bytes: &[u8]) -> (Vec<Range<usize>>, bool) {
 
 pub(in crate::radio) fn recover(
     aggregate: bool,
+    decode: impl FnMut(Profile) -> DecodeAttempt,
+) -> DecodeAttempt {
+    recover_format(aggregate, false, decode)
+}
+pub(in crate::radio) fn recover_vht(decode: impl FnMut(Profile) -> DecodeAttempt) -> DecodeAttempt {
+    recover_format(true, true, decode)
+}
+fn recover_format(
+    aggregate: bool,
+    vht: bool,
     mut decode: impl FnMut(Profile) -> DecodeAttempt,
 ) -> DecodeAttempt {
     let mut best: Option<DecodeAttempt> = None;
@@ -254,7 +268,7 @@ pub(in crate::radio) fn recover(
             }
             continue;
         }
-        let (ranges, complete) = members(bytes);
+        let (ranges, complete) = members(bytes, vht);
         if trusted.is_empty() {
             trusted = ranges;
             best = Some(current);
@@ -280,7 +294,7 @@ pub(in crate::radio) fn recover(
             retained[range.clone()].copy_from_slice(&bytes[range.clone()]);
             trusted.push(range);
         }
-        if members(retained).1 {
+        if members(retained, vht).1 {
             break;
         }
     }
@@ -342,7 +356,7 @@ mod tests {
     fn radio_recovery_retains_original_and_complementary_aggregate_members() {
         for name in ["alignments", "duplicate"] {
             let original = fixture(name);
-            let (ranges, complete) = members(&original);
+            let (ranges, complete) = members(&original, false);
             assert!(complete && ranges.len() >= 2);
             let mut first = original.clone();
             let mut second = original.clone();

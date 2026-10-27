@@ -13,7 +13,7 @@ use crate::radio::{
     transport::{
         ComplexSample, Discontinuity, GapReason, IqContinuity, IqEvent, IqPosition, SampleLoss,
     },
-    wifi::ht,
+    wifi::{ampdu, ht, vht},
 };
 use crate::LinkType;
 
@@ -40,6 +40,7 @@ struct Pending {
     samples: Vec<ComplexSample>,
     info: Option<SignalInfo>,
     ht: Option<ht::rx::Candidate>,
+    vht: Option<vht::rx::Candidate>,
 }
 /// Bounded streaming legacy OFDM receiver. Only integrity-valid PSDUs are delivered.
 #[derive(Default)]
@@ -81,13 +82,14 @@ impl LegacyOfdmDecoder {
         aggregate: bool,
         out: &mut DecodeOutput,
         members: Option<&[std::ops::Range<usize>]>,
+        vht: bool,
     ) -> RadioResult<()> {
         let limit = self
             .output_allowance
             .unwrap_or(frame.config.max_pending_frames)
             .min(frame.config.max_pending_frames);
         if aggregate {
-            let counts = ht::rx::publish_aggregate(frame, limit, out, members)?;
+            let counts = ampdu::publish(frame, limit, out, members, vht)?;
             self.stats.valid_frames = self.stats.valid_frames.saturating_add(counts.valid_frames);
             self.stats.invalid_fcs = self.stats.invalid_fcs.saturating_add(counts.invalid_fcs);
         } else if valid_fcs(&frame.bytes) {
@@ -270,6 +272,36 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         }
                         ht::rx::HeaderOutcome::NotHt => {}
                     }
+                    if self.ht.accepts_ht() {
+                        match vht::rx::Candidate::recognize(
+                            &mut p.samples,
+                            &p.acquisition,
+                            config,
+                            reserved,
+                        ) {
+                            vht::rx::HeaderOutcome::Supported { candidate, info } => {
+                                out.diagnostics.push(PhyDiagnostic::VhtSignal {
+                                    fields: candidate.fields,
+                                    preamble_sample_index: p.start.sample_index,
+                                });
+                                p.vht = Some(candidate);
+                                p.info = Some(info);
+                                continue;
+                            }
+                            vht::rx::HeaderOutcome::Unsupported(fields) => {
+                                out.diagnostics.push(PhyDiagnostic::VhtSignal {
+                                    fields,
+                                    preamble_sample_index: p.start.sample_index,
+                                });
+                                out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                                self.stats.rejected_frames =
+                                    self.stats.rejected_frames.saturating_add(1);
+                                self.pending[slot] = None;
+                                continue;
+                            }
+                            vht::rx::HeaderOutcome::NotVht => {}
+                        }
+                    }
                     let info = p.info.unwrap();
                     if !self
                         .ht
@@ -286,8 +318,20 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 {
                     let p = self.pending[slot].take().unwrap();
                     let info = p.info.unwrap();
+                    let is_vht = p.vht.is_some();
                     let (decoded, frame_diagnostics, failure_diagnostics, aggregate, members) =
-                        if let Some(candidate) = p.ht {
+                        if let Some(candidate) = p.vht {
+                            let attempt =
+                                candidate.decode(&p.samples, &p.acquisition, info, &p.start);
+                            out.diagnostics.extend(attempt.output_diagnostics);
+                            (
+                                attempt.decoded,
+                                attempt.frame_diagnostics,
+                                attempt.failure_diagnostics,
+                                true,
+                                attempt.aggregate_members,
+                            )
+                        } else if let Some(candidate) = p.ht {
                             let aggregate = candidate.aggregate();
                             let attempt =
                                 candidate.decode(&p.samples, &p.acquisition, info, &p.start);
@@ -331,9 +375,13 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 rate_bps: info.rate_bps,
                                 diagnostics,
                             };
-                            if let Err(error) =
-                                self.publish_psdu(frame, aggregate, &mut out, members.as_deref())
-                            {
+                            if let Err(error) = self.publish_psdu(
+                                frame,
+                                aggregate,
+                                &mut out,
+                                members.as_deref(),
+                                is_vht,
+                            ) {
                                 self.reset(ResetReason::Explicit);
                                 return Err(error);
                             }
@@ -411,6 +459,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             samples: Vec::with_capacity(80),
                             info: None,
                             ht: None,
+                            vht: None,
                         });
                     }
                     SyncEvent::Failure(_) => {
@@ -455,7 +504,7 @@ mod tests {
         // be published nor hide the explicitly verified original offset.
         let ranges = [offsets[1] - 4..offsets[1] + expected[1].len()];
         let mut out = DecodeOutput::default();
-        let counts = ht::rx::publish_aggregate(frame, 1, &mut out, Some(&ranges)).unwrap();
+        let counts = ampdu::publish(frame, 1, &mut out, Some(&ranges), false).unwrap();
         assert_eq!(counts.valid_frames, 1);
         assert_eq!(out.frames.len(), 1);
         assert_eq!(out.frames[0].bytes, expected[1]);
