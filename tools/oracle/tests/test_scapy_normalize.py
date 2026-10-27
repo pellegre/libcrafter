@@ -419,6 +419,25 @@ class IgmpNormalizedModelTest(unittest.TestCase):
         self.assertEqual(igmp["checksum_status"], "valid")
         self.assertNotIn("payload", decoded.fields)
 
+    def test_membership_query_retains_wire_options_and_link_boundaries(self) -> None:
+        scapy = _scapy()
+        igmp = _igmp_packet(0x11, 0, bytes.fromhex("00000000"))
+        for options in [b"", bytes.fromhex("94040000"), bytes.fromhex("01010000")]:
+            ip = _base_igmp_ip() / scapy.Raw(igmp)
+            ip.options = [] if not options else [scapy.IPOption(options)]
+            ether = scapy.Ether(src="02:00:00:00:00:01", dst="01:00:5e:00:00:01")
+            for root, packet in [
+                ("l3:ipv4", ip),
+                ("link:ethernet", ether / ip),
+                ("link:ethernet", ether / scapy.Dot1Q(vlan=7) / ip),
+            ]:
+                with self.subTest(options=options.hex(), root=root, layers=packet.summary()):
+                    raw = bytes(scapy.raw(packet))
+                    decoded = normalize.decode_bytes(raw, root=root, source_hex=raw.hex())
+                    self.assertEqual(decoded.fields["igmp"]["type"], 0x11)
+                    self.assertEqual(decoded.fields["igmp"]["checksum_status"], "valid")
+                    self.assertNotIn("payload", decoded.fields)
+
     def test_v3_query_sources_and_raw_tail(self) -> None:
         body = (
             bytes([0x0A, 0x7D])

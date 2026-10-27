@@ -410,7 +410,13 @@ def normalize_packet(
         root=root,
         source_hex=source_hex,
     )
-    _canonicalize_igmp(packet, normalized_layers, normalized_fields)
+    _canonicalize_igmp(
+        packet,
+        normalized_layers,
+        normalized_fields,
+        root=root,
+        source_hex=source_hex,
+    )
     _canonicalize_rip(packet, normalized_layers, normalized_fields)
     _canonicalize_ripng(packet, normalized_layers, normalized_fields)
     _canonicalize_snmp_raw(normalized_layers, normalized_fields, feature_tags)
@@ -1947,12 +1953,17 @@ def _canonicalize_igmp(
     packet: Any,
     layers: list[str],
     fields: dict[str, JSONObject],
+    *,
+    root: str | None = None,
+    source_hex: str | None = None,
 ) -> None:
     """Rebuild Scapy's opaque IPv4 protocol-2 payload as IGMP layers."""
 
     if "ipv4" not in layers:
         return
-    igmp_raw = _igmp_payload_from_ipv4(packet)
+    igmp_raw = _ipv4_payload_from_source(source_hex, root, _IGMP_PROTOCOL)
+    if igmp_raw is None:
+        igmp_raw = _igmp_payload_from_ipv4(packet)
     if igmp_raw is None or len(igmp_raw) < 4:
         return
 
@@ -2289,7 +2300,7 @@ def _canonicalize_icmpv4(
     icmp_layer = _scapy_layer(packet, "ICMP")
     if icmp_layer is None:
         return
-    icmp_raw = _icmpv4_wire_bytes_from_source(source_hex, root)
+    icmp_raw = _ipv4_payload_from_source(source_hex, root, _PROTOCOLS["icmp"])
     if icmp_raw is None:
         try:
             icmp_raw = bytes(import_scapy()["all"].raw(icmp_layer))
@@ -2332,7 +2343,10 @@ def _canonicalize_icmpv4(
         layers.append("payload")
 
 
-def _icmpv4_wire_bytes_from_source(source_hex: str | None, root: str | None) -> bytes | None:
+def _ipv4_payload_from_source(
+    source_hex: str | None, root: str | None, protocol: int
+) -> bytes | None:
+    """Retain wire boundaries when Scapy's rebuild inserts protocol options."""
     if source_hex is None:
         return None
     try:
@@ -2349,7 +2363,7 @@ def _icmpv4_wire_bytes_from_source(source_hex: str | None, root: str | None) -> 
     ihl = (first & 0x0F) * 4
     if ihl < 20 or len(raw) < ipv4_offset + ihl:
         return None
-    if raw[ipv4_offset + 9] != _PROTOCOLS["icmp"]:
+    if raw[ipv4_offset + 9] != protocol:
         return None
 
     total_length = int.from_bytes(raw[ipv4_offset + 2 : ipv4_offset + 4], "big")
@@ -2357,10 +2371,10 @@ def _icmpv4_wire_bytes_from_source(source_hex: str | None, root: str | None) -> 
     if total_length < ihl:
         return None
     ipv4_end = ipv4_offset + min(total_length, available)
-    icmp_offset = ipv4_offset + ihl
-    if icmp_offset >= ipv4_end:
+    payload_offset = ipv4_offset + ihl
+    if payload_offset >= ipv4_end:
         return None
-    return raw[icmp_offset:ipv4_end]
+    return raw[payload_offset:ipv4_end]
 
 
 def _ipv4_offset_from_source(raw: bytes, root: str | None) -> int | None:
