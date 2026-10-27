@@ -13,7 +13,7 @@ use super::ofdm::{LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig};
 use super::vht::{VhtTransmission, VhtTxConfig};
 use crate::{wire::PacketRecord, Dot11};
 
-/// Legacy and HT20 encoders behind the same protocol-independent sample contract.
+/// Legacy, HT20 and VHT20 encoders behind the same protocol-independent sample contract.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WifiPacketEncoder {
     Legacy(LegacyWifiTxConfig),

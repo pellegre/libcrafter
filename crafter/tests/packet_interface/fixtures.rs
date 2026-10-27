@@ -117,6 +117,32 @@ fn independent_legacy_and_ht_vectors_cross_packet_wire() {
 }
 
 #[test]
+fn independent_vht_aggregates_cross_packet_wire() {
+    for name in ["vht-ampdu-8-gi400-duplicate", "vht-ldpc-0-gi800-duplicate"] {
+        let row = include_str!("../fixtures/iq/vht20/index.tsv")
+            .lines()
+            .find(|r| r.split('\t').next() == Some(name))
+            .unwrap();
+        let columns: Vec<_> = row.split('\t').collect();
+        let expected: Vec<_> = columns[4].split(',').map(decode_hex).collect();
+        let records = receive(iq_backend(
+            fs::read(fixtures().join(format!("iq/vht20/{name}.cs8"))).unwrap(),
+        ));
+        assert_eq!(records.len(), expected.len());
+        for (record, bytes) in records.iter().zip(&expected) {
+            assert_eq!(record.metadata().captured_bytes(), Some(bytes.as_slice()));
+            let radio = record.metadata().radio().unwrap();
+            assert_eq!(radio.integrity, FrameIntegrity::ValidFcs);
+            assert_eq!(radio.start.sample_index, 37);
+            assert!(radio
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d, crafter::radio::PhyDiagnostic::VhtSignal { .. })));
+        }
+    }
+}
+
+#[test]
 fn independent_ht_duplicates_remain_two_occurrences() {
     let name = "ht-ampdu-0-gi400-bcc-duplicate";
     let row = include_str!("../fixtures/iq/ht-ampdu-index.tsv")

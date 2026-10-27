@@ -26,6 +26,12 @@ pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
     if frame
         .diagnostics
         .iter()
+        .any(|d| matches!(d, PhyDiagnostic::VhtSignal { .. }))
+    {
+        "vht"
+    } else if frame
+        .diagnostics
+        .iter()
         .any(|d| matches!(d, PhyDiagnostic::HtSignal { .. }))
     {
         "ht"
@@ -58,6 +64,43 @@ pub fn ht_signal_metadata(f: &HtSignalFields, preamble_sample_index: u64) -> ser
         "extension_spatial_streams":f.extension_spatial_streams,
         "preamble_sample_index":preamble_sample_index,
     })
+}
+pub fn vht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
+    frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::VhtSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(vht_signal_metadata(fields, *preamble_sample_index)),
+        _ => None,
+    })
+}
+pub fn vht_signal_metadata(f: &VhtSignalAFields, preamble: u64) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "bandwidth_code":f.bandwidth_code, "bandwidth_mhz":match f.bandwidth_code {0=>20,1=>40,2=>80,_=>160},
+        "group_id":f.group_id, "stbc":f.stbc, "guard_interval_ns":if f.short_guard_interval {400} else {800},
+        "ldpc_extra_symbol":f.ldpc_extra_symbol, "short_gi_disambiguation":f.short_gi_disambiguation,
+        "preamble_sample_index":preamble,
+    });
+    match f.users {
+        VhtSignalAUsers::Single {
+            space_time_streams,
+            partial_aid,
+            mcs,
+            ldpc,
+            beamformed,
+        } => {
+            value["format"] = "su".into();
+            value["space_time_streams"] = space_time_streams.into();
+            value["partial_aid"] = partial_aid.into();
+            value["mcs"] = mcs.into();
+            value["coding"] = if ldpc { "ldpc" } else { "bcc" }.into();
+            value["beamformed"] = beamformed.into();
+        }
+        VhtSignalAUsers::Multi { .. } => {
+            value["format"] = "mu".into();
+        }
+    }
+    value
 }
 pub fn ampdu_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
     frame.diagnostics.iter().find_map(|d| match d {
@@ -117,7 +160,7 @@ impl Config {
         // Example-side limits keep untrusted artifact metadata from requesting huge allocations.
         if c.max_chunk_samples > 262_144
             || c.max_buffer_samples > MAX_EXAMPLE_BUFFER_SAMPLES
-            || c.max_frame_bytes > 4095
+            || c.max_frame_bytes > 16383
             || c.max_pending_frames > 1024
         {
             return Err("artifact allocation bounds exceeded".into());

@@ -245,7 +245,7 @@ impl PhyDecoder for ObservedDecoder {
             self.ordinal += 1;
             emit(
                 &self.out,
-                json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":frame_phy(f),"ht":ht_metadata(f),"ampdu":ampdu_metadata(f),"preamble":f.diagnostics.iter().find_map(|d| match d { PhyDiagnostic::Dsss { short_preamble, .. } => Some(if *short_preamble { "short" } else { "long" }), _ => None }),"rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()}),
+                json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":frame_phy(f),"ht":ht_metadata(f),"vht":vht_metadata(f),"ampdu":ampdu_metadata(f),"preamble":f.diagnostics.iter().find_map(|d| match d { PhyDiagnostic::Dsss { short_preamble, .. } => Some(if *short_preamble { "short" } else { "long" }), _ => None }),"rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()}),
             )?;
         }
         if let Some(end) = terminal {
@@ -262,6 +262,13 @@ impl PhyDecoder for ObservedDecoder {
 }
 fn ht_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
     match diagnostic {
+        PhyDiagnostic::VhtSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(json!({
+            "kind":"vht_signal", "epoch":epoch, "preamble_sample_index":preamble_sample_index,
+            "vht":vht_signal_metadata(fields,*preamble_sample_index), "mac_integrity":"not_established_by_header",
+        })),
         PhyDiagnostic::HtSignal {
             fields,
             preamble_sample_index,
@@ -302,7 +309,7 @@ fn receive(
     modern: bool,
 ) -> Result<()> {
     if modern && ofdm_only {
-        return Err("Wi-Fi 4 decoding includes OFDM and DSSS/CCK".into());
+        return Err("Wi-Fi decoding includes OFDM and DSSS/CCK".into());
     }
     let out = Rc::new(RefCell::new(BufWriter::new(std::io::stdout())));
     let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"decoder":if modern {"wifi"} else if ofdm_only {"ofdm"} else {"legacy_wifi"},"dispatch":dispatch.label(),"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
@@ -664,7 +671,7 @@ fn main() -> Result<()> {
         center_frequency_hz: 2_412_000_000,
         max_chunk_samples: chunk_samples,
         max_buffer_samples: buffer_samples,
-        max_frame_bytes: 4095,
+        max_frame_bytes: if modern { 16383 } else { 4095 },
         // Coarse window workers can finish together at stream end, so their
         // bounded aggregate needs more room than a serial decoder response.
         max_pending_frames: if modern {

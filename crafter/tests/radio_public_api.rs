@@ -74,6 +74,13 @@ fn radio_facade_exports_the_existing_public_surface() {
     assert_type::<DecodeOutput>();
     assert_type::<IqContinuity>();
 
+    assert_type::<crafter::radio::VhtMcs>();
+    assert_type::<crafter::radio::VhtSignalAFields>();
+    assert_type::<crafter::radio::VhtSignalB20Fields>();
+    assert_wifi_encoder::<crafter::radio::VhtTxConfig>();
+    assert_wifi_transmission::<crafter::radio::VhtTransmission>();
+    assert_type::<prelude::VhtGuardInterval>();
+    assert_type::<prelude::VhtCoding>();
     assert_type::<DecoderStats>();
     assert_type::<SignalInfo>();
     assert_type::<DsssCckDecoder>();

@@ -2,6 +2,7 @@
 
 use super::artifact::{hex, read_json, unhex, valid_fcs, Result};
 use super::ht_compare::HtPhy;
+use super::vht_compare::VhtPhy;
 use crafter::{LinkType, Packet, Radiotap};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -39,6 +40,17 @@ fn matrix_case_ids(family: &str) -> Result<BTreeSet<String>> {
             .into_iter()
             .map(str::to_owned)
             .collect()),
+        "vht20" => {
+            let mut ids = BTreeSet::new();
+            for coding in ["bcc", "ldpc"] {
+                for guard in ["gi800", "gi400"] {
+                    for mcs in 0..9 {
+                        ids.insert(format!("vht20-su-{coding}-mcs{mcs}-{guard}"));
+                    }
+                }
+            }
+            Ok(ids)
+        }
         "ht20" => {
             let mut ids = BTreeSet::new();
             for format in ["mixed", "greenfield"] {
@@ -61,6 +73,7 @@ fn matrix_case_ids(family: &str) -> Result<BTreeSet<String>> {
 
 #[derive(Debug, Clone)]
 enum PlannedPhy {
+    Vht20(VhtPhy),
     Legacy {
         rate_bps: u32,
         short_preamble: bool,
@@ -82,6 +95,7 @@ impl PlannedPhy {
             }
         }
         match (self, observed) {
+            (Self::Vht20(a), ObservedPhy::Vht20(b)) => a.compatible(b),
             (
                 Self::Legacy {
                     rate_bps,
@@ -115,6 +129,9 @@ impl PlannedPhy {
 
     fn metadata(&self) -> Value {
         match self {
+            Self::Vht20(v) => {
+                json!({"phy":"vht20", "mcs":v.mcs, "guard_interval_ns":if v.short_gi {400} else {800}, "coding":if v.ldpc {"ldpc"} else {"bcc"}, "preamble":"su"})
+            }
             Self::Legacy {
                 rate_bps,
                 short_preamble,
@@ -146,6 +163,7 @@ struct PlannedCase {
 
 #[derive(Debug, Clone)]
 enum ObservedPhy {
+    Vht20(VhtPhy),
     Legacy { rate_bps: u32, short_preamble: bool },
     Ht20(HtPhy),
 }
@@ -180,7 +198,37 @@ fn load_plan(path: &str) -> Result<Vec<PlannedCase>> {
                     .as_u64()
                     .and_then(|v| u32::try_from(v).ok())
                     .ok_or("invalid rate")?;
-                let phy = if value["phy"] == "ht20" {
+                let phy = if value["phy"] == "vht20" {
+                    let mcs = value["mcs"]
+                        .as_u64()
+                        .filter(|m| *m <= 8)
+                        .ok_or("invalid VHT MCS")? as u8;
+                    let short_gi = match value["guard_interval_ns"].as_u64() {
+                        Some(400) => true,
+                        Some(800) => false,
+                        _ => return Err("invalid VHT guard".into()),
+                    };
+                    let ldpc = match value["coding"].as_str() {
+                        Some("bcc") => false,
+                        Some("ldpc") => true,
+                        _ => return Err("invalid VHT coding".into()),
+                    };
+                    let phy = VhtPhy {
+                        mcs,
+                        short_gi,
+                        ldpc,
+                        stbc: Some(false),
+                        group_id: Some(63),
+                    };
+                    if value["preamble"] != "su"
+                        || value["bandwidth_mhz"] != 20
+                        || value["space_time_streams"] != 1
+                        || phy.rate_bps() != rate_bps
+                    {
+                        return Err("inconsistent VHT PHY".into());
+                    }
+                    PlannedPhy::Vht20(phy)
+                } else if value["phy"] == "ht20" {
                     let mcs = value["mcs"]
                         .as_u64()
                         .filter(|value| *value < 8)
@@ -270,19 +318,27 @@ fn observed_frame(data: &[u8], original_len: u32) -> std::result::Result<Observe
     {
         return Err("invalid_fcs_or_phy");
     }
-    let phy = match radiotap.mcs_value() {
-        Some(mcs) => ObservedPhy::Ht20(
-            HtPhy::reference(mcs, radiotap.a_mpdu_status_value()).map_err(|_| "unsupported_ht")?,
-        ),
-        None => {
-            let rate_bps = u32::from(radiotap.rate_value().ok_or("missing_rate")?) * 500_000;
-            let short_preamble = flags.bits() & 2 != 0;
-            if rate_bps == 1_000_000 && short_preamble {
-                return Err("invalid_preamble");
-            }
-            ObservedPhy::Legacy {
-                rate_bps,
-                short_preamble,
+    let phy = if let Some(vht) = radiotap.vht_value() {
+        if radiotap.mcs_value().is_some() {
+            return Err("conflicting_phy");
+        }
+        ObservedPhy::Vht20(VhtPhy::reference(vht)?)
+    } else {
+        match radiotap.mcs_value() {
+            Some(mcs) => ObservedPhy::Ht20(
+                HtPhy::reference(mcs, radiotap.a_mpdu_status_value())
+                    .map_err(|_| "unsupported_ht")?,
+            ),
+            None => {
+                let rate_bps = u32::from(radiotap.rate_value().ok_or("missing_rate")?) * 500_000;
+                let short_preamble = flags.bits() & 2 != 0;
+                if rate_bps == 1_000_000 && short_preamble {
+                    return Err("invalid_preamble");
+                }
+                ObservedPhy::Legacy {
+                    rate_bps,
+                    short_preamble,
+                }
             }
         }
     };
@@ -365,17 +421,21 @@ pub fn compare(plan: &str, capture: &str) -> Result<Value> {
 /// Compare FCS-validated receiver observations with the existing plan contract.
 pub(super) fn compare_received(
     plan: &str,
-    observations: Vec<(Vec<u8>, u32, Option<bool>, Option<HtPhy>)>,
+    observations: Vec<(Vec<u8>, u32, Option<bool>, Option<HtPhy>, Option<VhtPhy>)>,
 ) -> Result<Value> {
     let cases = load_plan(plan)?;
     let mut frames = Vec::new();
-    for (mac, rate_bps, short_preamble, ht) in observations {
-        let phy = match ht {
-            Some(ht) => ObservedPhy::Ht20(ht),
-            None => ObservedPhy::Legacy {
-                rate_bps,
-                short_preamble: short_preamble.ok_or("missing observed legacy preamble")?,
-            },
+    for (mac, rate_bps, short_preamble, ht, vht) in observations {
+        let phy = if let Some(vht) = vht {
+            ObservedPhy::Vht20(vht)
+        } else {
+            match ht {
+                Some(ht) => ObservedPhy::Ht20(ht),
+                None => ObservedPhy::Legacy {
+                    rate_bps,
+                    short_preamble: short_preamble.ok_or("missing observed legacy preamble")?,
+                },
+            }
         };
         frames.push(Observed {
             mac,

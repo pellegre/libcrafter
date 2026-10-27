@@ -172,19 +172,25 @@ pub(super) fn check_rx_gaps(report: &Value, run: &Value, inventory: &Value) -> R
         }
         return Ok(());
     }
-    if gaps != &vec![json!(compare::REFERENCE_HT_CONFIGURATION_GAP)]
-        || run["evidence_gaps"] != report["qualification_gaps"]
-        || run["phy_scope"] != "known_fields"
-    {
+    if run["evidence_gaps"] != report["qualification_gaps"] || run["phy_scope"] != "known_fields" {
         return Err("unresolved or undisclosed RX evidence gap".into());
     }
-    let disclosed = inventory.as_array().is_some_and(|entries| {
-        entries.iter().any(|entry| {
-            entry["mode"] == "reference-ht-configuration" && text(entry, "reason").is_ok()
-        })
-    });
-    if !disclosed {
-        return Err("unverified reference HT configuration missing from inventory".into());
+    let mut seen = BTreeSet::new();
+    for gap in gaps {
+        let mode = match gap.as_str() {
+            Some(compare::REFERENCE_HT_CONFIGURATION_GAP) => "reference-ht-configuration",
+            Some(compare::REFERENCE_VHT_CONFIGURATION_GAP) => "reference-vht-configuration",
+            _ => return Err("unresolved or undisclosed RX evidence gap".into()),
+        };
+        if !seen.insert(mode)
+            || !inventory.as_array().is_some_and(|entries| {
+                entries
+                    .iter()
+                    .any(|entry| entry["mode"] == mode && text(entry, "reason").is_ok())
+            })
+        {
+            return Err("unverified reference configuration missing from inventory".into());
+        }
     }
     Ok(())
 }
@@ -291,7 +297,10 @@ pub(super) fn check_targets(report: &Value, targets: &Value) -> Result<()> {
     for target in thresholds {
         let family = text(target, "family")?;
         if !families.insert(family)
-            || !matches!(family, "all" | "dsss" | "cck" | "legacy_ofdm" | "ht")
+            || !matches!(
+                family,
+                "all" | "dsss" | "cck" | "legacy_ofdm" | "ht" | "vht"
+            )
         {
             return Err("invalid RX target family".into());
         }
@@ -369,7 +378,7 @@ fn monitor_radio(base: &Path, monitor: &Value, plan: &Path) -> Result<Value> {
         .into_iter()
         .map(|frame| {
             let preamble = preambles.get(&frame.id).copied().flatten();
-            (frame.bytes, frame.rate_bps, preamble, frame.ht)
+            (frame.bytes, frame.rate_bps, preamble, frame.ht, frame.vht)
         })
         .collect();
     let mut report = transmit_compare::compare_received(path_text(plan)?, observed)?;
@@ -439,7 +448,11 @@ pub fn verify(path: &str) -> Result<Value> {
         return Err("RX qualification requires three independent live runs".into());
     }
     let mut tx = Vec::new();
-    for family in ["legacy", "ht20"] {
+    let mut families = vec!["legacy", "ht20"];
+    if value["tx"].get("vht20").is_some() {
+        families.push("vht20");
+    }
+    for family in families {
         let (path, aggregate) = json_file(base, &value["tx"][family], "HackRF TX aggregate")?;
         if aggregate["revision"] != revision
             || aggregate["family"].as_str().unwrap_or("legacy") != family

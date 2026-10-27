@@ -11,6 +11,8 @@ mod interface_qualification;
 #[path = "../examples/radio_support/transmit_compare.rs"]
 #[allow(dead_code)]
 mod transmit_compare;
+#[path = "../examples/radio_support/vht_compare.rs"]
+mod vht_compare;
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -87,6 +89,26 @@ fn unknown_reference_configuration_requires_explicit_scope_and_inventory() {
     let complete = json!({"qualification_gaps":[]});
     assert!(interface_qualification::check_rx_gaps(&complete, &json!({}), &json!([])).is_ok());
     assert!(interface_qualification::check_rx_gaps(&complete, &run, &inventory).is_err());
+}
+
+#[test]
+fn vht_reference_configuration_gaps_require_matching_disclosure() {
+    let gap = compare::REFERENCE_VHT_CONFIGURATION_GAP;
+    let report = json!({"qualification_gaps":[gap]});
+    let run = json!({"phy_scope":"known_fields","evidence_gaps":[gap]});
+    let inventory =
+        json!([{"mode":"reference-vht-configuration","reason":"configuration fields unavailable"}]);
+    assert!(interface_qualification::check_rx_gaps(&report, &run, &inventory).is_ok());
+    assert!(interface_qualification::check_rx_gaps(&report, &json!({}), &inventory).is_err());
+    assert!(interface_qualification::check_rx_gaps(&report, &run, &json!([])).is_err());
+    let combined = json!([compare::REFERENCE_HT_CONFIGURATION_GAP, gap]);
+    let report = json!({"qualification_gaps":combined});
+    let run = json!({"phy_scope":"known_fields","evidence_gaps":combined});
+    let inventory = json!([
+        {"mode":"reference-ht-configuration","reason":"HT fields unavailable"},
+        {"mode":"reference-vht-configuration","reason":"VHT fields unavailable"}
+    ]);
+    assert!(interface_qualification::check_rx_gaps(&report, &run, &inventory).is_ok());
 }
 
 struct Scratch(PathBuf);
