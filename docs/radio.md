@@ -5,8 +5,9 @@ records and encodes packets back into samples for transmission. The Wi-Fi
 codec runs independently of the backend, which can also read saved samples
 or store generated samples in memory.
 
-The codec supports legacy OFDM, DSSS/CCK, and 20 MHz Wi-Fi 4 (HT20). Encoded
-waveforms use signed interleaved 8-bit I/Q (CS8) at a 20 Msps source clock.
+The codec supports legacy OFDM, DSSS/CCK, 20 MHz Wi-Fi 4 (HT20), and
+single-stream Wi-Fi 5 (VHT20). See [VHT20 scope and use](reference/radio-vht20.md).
+Encoded waveforms use signed interleaved 8-bit I/Q (CS8) at a 20 Msps source clock.
 The `radio-hackrf` feature enables the included HackRF backend. Additional SDR
 backends implement the sample interfaces described below.
 
@@ -24,7 +25,7 @@ parses recovered frame bytes into typed packets for `Sniffer`. Each
 
 `IqSource` supplies `IqEvent` values to a `PhyDecoder`. The provided
 `ReaderIqSource` reads signed interleaved 8-bit I/Q. `WifiDecoder` combines
-legacy reception with HT20; `LegacyWifiDecoder` combines OFDM and DSSS/CCK;
+legacy reception with HT20 and VHT20; `LegacyWifiDecoder` combines OFDM and DSSS/CCK;
 `LegacyOfdmDecoder` and `DsssCckDecoder` select one legacy receiver explicitly.
 Each reconstructs FCS-valid `RecoveredFrame` values.
 `RadioPacketSource::new(source, decoder, bounds)` implements the ordinary
@@ -38,7 +39,7 @@ implement `IqSource` without changing the PHY decoder or packet parser.
 
 The reverse direction uses `PacketEncoder` to produce `EncodedSamples`, then
 an SDR or offline `IqSink` to store or emit them. `OwnedSamples` contains CS8
-data and its sample rate. `WifiPacketEncoder::Legacy` and `Ht20` encode the
+data and its sample rate. `WifiPacketEncoder::Legacy`, `Ht20`, and `Vht20` encode the
 supported Wi-Fi formats. `IqSinkOutcome` reports sample counts and device
 completion; `WriteReport` reports packet-byte counts.
 
@@ -548,8 +549,8 @@ must include their actual precision and semantics.
 
 The comparator accepts radiotap pcap records only. It parses the capture header
 separately from the MAC body, requires explicit flags, a supported legacy rate
-or known HT20 MCS/GI/bandwidth, and the selected frequency. It excludes
-incompatible PHY/channel metadata; VHT/HE/EHT remain unsupported here.
+or known HT20/VHT20 MCS/GI/bandwidth, and the selected frequency. It excludes
+incompatible PHY/channel metadata; HE/EHT remain unsupported here.
 See [modern HT comparison](modern-wifi-iq.md) for conditional known fields and
 aggregation identity. Unparseable namespaces remain exclusions. Explicit DATAPAD
 removes only the alignment bytes between a recognized legacy MAC header and its
@@ -1072,9 +1073,9 @@ aggregate, including STBC. HT, legacy OFDM, DSSS, and CCK frames therefore
 retain the same raw bytes and PHY metadata as serial `WifiDecoder` output.
 
 Use `--parallel-windows` to select four legacy window workers in the receive
-example, or `--parallel-windows --modern` for Wi-Fi 4.
+example, or `--parallel-windows --modern` for Wi-Fi 4/5.
 Use `--benchmark-artifact saved.iq windowed-3` or `windowed-4` for controlled
-legacy measurement; `wifi-windowed-3` and `wifi-windowed-4` select Wi-Fi 4. Windowed
+legacy measurement; `wifi-windowed-3` and `wifi-windowed-4` select Wi-Fi 4/5. Windowed
 frames retain their original coordinates and enter `RadioPacketSource` through
 the normal `PhyDecoder` interface. Larger worker counts increase bounded memory
 and can help only when the assigned CPUs provide corresponding execution time.

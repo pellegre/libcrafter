@@ -179,9 +179,9 @@ interface and its channel. For SDR input and output, use
 `WifiBackend::RadioAdapters` with a sample source and sink.
 `WifiBackend::HackRf { rx, tx }` opens the included HackRF backend.
 
-The `radio` feature supports legacy Wi-Fi and Wi-Fi 4 on 20 MHz channels
-(HT20), including sample replay and generation. `radio-hackrf` enables the
-native HackRF backend and requires libhackrf.
+The `radio` feature supports legacy Wi-Fi, Wi-Fi 4 HT20, and single-stream
+Wi-Fi 5 VHT20 on 20 MHz channels, including sample replay and generation.
+`radio-hackrf` enables the native HackRF backend and requires libhackrf.
 
 See the [interface reference](docs/reference/wire.md#interchangeable-packet-interfaces)
 for configuration and status APIs, and the [radio guide](docs/radio.md) for
@@ -317,7 +317,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | Layer | Coverage | Guide |
 | --- | --- | --- |
 | Ethernet / VLAN | Ethernet II and 802.1Q VLAN, Linux cooked capture, null/loopback | — |
-| IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields; interchangeable monitor/SDR packet interfaces; optional legacy and Wi-Fi 4 HT20 sample decoding/encoding with SDR and offline sample backends | [dot11](docs/guide/dot11.md), [radio](docs/radio.md) |
+| IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields; interchangeable monitor/SDR packet interfaces; optional legacy, Wi-Fi 4 HT20 and single-stream Wi-Fi 5 VHT20 sample decoding/encoding with SDR and offline sample backends | [dot11](docs/guide/dot11.md), [radio](docs/radio.md) |
 | ARP | Request/reply construction and decode | [arp](docs/guide/arp.md) |
 | IPv4 | DSCP/ECN, protocol labels, checksum status, typed options, fragment fields (no automatic reassembly) | [ipv4](docs/guide/ipv4.md) |
 | IGMP | IPv4 packet-layer membership queries/reports, IGMPv1/v2 compatibility, IGMPv3 query/report records, generic extensions, and multicast router discovery packet shapes; not a router, snooper, proxy, or scanner | [igmp](docs/guide/igmp.md) |
