@@ -122,7 +122,7 @@ fn frame_value(record: &PacketRecord, ordinal: u64) -> Result<Value> {
     Ok(
         json!({"kind":"frame","ordinal":ordinal,"original_mac_hex":hex(&frame.bytes),
         "fcs":match frame.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},
-        "phy":frame_phy(&frame),"ht":ht_metadata(&frame),"ampdu":ampdu_metadata(&frame),
+        "phy":frame_phy(&frame),"ht":ht_metadata(&frame),"vht":vht_metadata(&frame),"ampdu":ampdu_metadata(&frame),
         "preamble":frame.diagnostics.iter().find_map(|d| match d {PhyDiagnostic::Dsss{short_preamble,..}=>Some(if *short_preamble {"short"} else {"long"}),_=>None}),
         "rate_bps":frame.rate_bps,"config":Config::from(&frame.config),"position":Position::from(&frame.start),
         "end_sample_index":frame.end_sample_index,"diagnostics":frame.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>() }),
@@ -143,7 +143,7 @@ pub(super) fn run(arguments: &[String]) -> Result<()> {
         center_frequency_hz: 2_412_000_000,
         max_chunk_samples: 65_536,
         max_buffer_samples: 16_777_216,
-        max_frame_bytes: 4095,
+        max_frame_bytes: 16383,
         max_pending_frames: 1024,
         max_capture_samples: 20_000_000,
         max_duration: Duration::from_secs(1),

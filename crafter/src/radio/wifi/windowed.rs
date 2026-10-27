@@ -18,7 +18,7 @@ use std::{
 const LEGACY_CORE_SAMPLES: usize = 2_000_000;
 const DSSS_CORE_SAMPLES: usize = 2_000_000;
 const LEGACY_MARGIN_SAMPLES: usize = 3_840 + 4_095 * 8 * 20 + 64;
-// One-stream HT20 MCS 0 with STBC has the longest supported Wi-Fi 4 allocation.
+// One-stream HT20 MCS 0 with STBC has the longest supported Wi-Fi 4/5 allocation.
 const WIFI4_OFDM_BUFFER_SAMPLES: usize = 3_840 + ((16 + 8 * 65_535 + 6 + 51) / 52) * 160;
 
 #[derive(Clone, Copy)]
@@ -514,9 +514,9 @@ impl PhyDecoder for WindowedLegacyWifiDecoder {
     }
 }
 
-/// Parallel Wi-Fi 4 and legacy decoding over bounded overlapping time windows.
+/// Parallel Wi-Fi 4/5 and legacy decoding over bounded overlapping time windows.
 ///
-/// One streaming worker handles legacy/HT OFDM while the remaining workers
+/// One streaming worker handles legacy/HT/VHT OFDM while the remaining workers
 /// decode overlapping DSSS/CCK time windows. Only the DSSS worker whose core
 /// owns a preamble emits that occurrence.
 pub struct WindowedWifiDecoder {
@@ -531,7 +531,7 @@ impl WindowedWifiDecoder {
         if !(2..=32).contains(&workers) {
             return Err(RadioError::Invalid {
                 field: "workers",
-                reason: "windowed Wi-Fi 4 requires 2..=32 total workers",
+                reason: "windowed Wi-Fi 4/5 requires 2..=32 total workers",
             });
         }
         Ok(Self {
@@ -577,7 +577,7 @@ impl WindowedWifiDecoder {
         let new_frames = first.frames.len() + second.frames.len();
         if self.pending.len() + new_frames > config.max_pending_frames {
             return Err(RadioError::Limit {
-                context: "windowed Wi-Fi 4 pending frames",
+                context: "windowed Wi-Fi 4/5 pending frames",
                 limit: config.max_pending_frames as u64,
                 actual: (self.pending.len() + new_frames) as u64,
             });
@@ -633,7 +633,7 @@ impl PhyDecoder for WindowedWifiDecoder {
             dsss_buffer
                 .checked_add(WIFI4_OFDM_BUFFER_SAMPLES)
                 .ok_or(RadioError::Overflow {
-                    context: "windowed Wi-Fi 4 sample buffer bound",
+                    context: "windowed Wi-Fi 4/5 sample buffer bound",
                 })?;
         if config.sample_rate_hz != 20_000_000
             || config.max_buffer_samples < required_buffer
@@ -642,7 +642,7 @@ impl PhyDecoder for WindowedWifiDecoder {
             self.reset_both(ResetReason::Explicit);
             return Err(RadioError::Invalid {
                 field: "config",
-                reason: "windowed Wi-Fi 4 requires 20 Msps and bounded OFDM, DSSS-window, and output storage",
+                reason: "windowed Wi-Fi 4/5 requires 20 Msps and bounded OFDM, DSSS-window, and output storage",
             });
         }
         let dsss_slots = (config.max_pending_frames / 4).max(3);

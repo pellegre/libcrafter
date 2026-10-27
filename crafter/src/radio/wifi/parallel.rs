@@ -480,9 +480,9 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
     }
 }
 
-/// Persistent parallel Wi-Fi 4 and legacy PHY workers.
+/// Persistent parallel Wi-Fi 4/5 and legacy PHY workers.
 ///
-/// The OFDM worker enables HT20 decoding while the independent DSSS/CCK worker
+/// The OFDM worker enables HT20/VHT20 decoding while the independent DSSS/CCK worker
 /// retains reception of legacy 2.4 GHz traffic. `with_parallel_dsss` assigns
 /// each DSSS acquisition phase to its own worker. Both constructors preserve
 /// the same bounded [`PhyDecoder`] contract as [`crate::radio::WifiDecoder`].

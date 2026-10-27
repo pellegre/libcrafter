@@ -603,6 +603,11 @@ mod tests {
             }
         }
         for family in ["legacy", "ht20", "vht20"] {
+            let frequency = if family == "vht20" {
+                5_220_000_000
+            } else {
+                2_437_000_000
+            };
             let reference = run(true, family, None, Vec::new()).unwrap();
             for (case, reference) in cases(true, family).unwrap().into_iter().zip(reference) {
                 let captured = Arc::new(Mutex::new(Vec::new()));
@@ -612,7 +617,7 @@ mod tests {
                         sink: Some(Box::new(Sink(captured.clone()))),
                         bounds: RxConfig {
                             sample_rate_hz: 20_000_000,
-                            center_frequency_hz: 2_437_000_000,
+                            center_frequency_hz: frequency,
                             max_chunk_samples: 65_536,
                             max_buffer_samples: 1_000_000,
                             max_frame_bytes: 4095,
@@ -621,7 +626,7 @@ mod tests {
                             max_duration: Duration::from_secs(1),
                         },
                     },
-                    interface_config(&case, 2_437_000_000, 300.0),
+                    interface_config(&case, frequency, 300.0),
                 )
                 .unwrap();
                 wire.writer()

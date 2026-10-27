@@ -227,3 +227,53 @@ fn discontinuities_clear_vht_candidates_and_output_bounds_are_explicit() {
         Err(RadioError::Limit { .. })
     ));
 }
+
+#[test]
+fn parallel_and_windowed_dispatch_preserve_vht_occurrences() {
+    let bytes = fs::read(root().join("vht-ldpc-7-gi400-duplicate.cs8")).unwrap();
+    let expected = feed(&bytes, 4096, config()).unwrap().frames;
+    let mut bounds = config();
+    bounds.max_buffer_samples = 16_000_000;
+    let mut decoders: Vec<Box<dyn PhyDecoder>> = vec![
+        Box::new(ParallelWifiDecoder::new().unwrap()),
+        Box::new(WindowedWifiDecoder::new(2).unwrap()),
+    ];
+    for decoder in &mut decoders {
+        let mut frames = Vec::new();
+        for (seq, part) in bytes.chunks(8192).enumerate() {
+            let event = IqEvent::Chunk(
+                IqChunk::new(
+                    bounds.clone(),
+                    IqPosition {
+                        epoch: 0,
+                        sequence: seq as u64,
+                        sample_index: (seq * 4096) as u64,
+                        time_anchor: None,
+                        discontinuity: None,
+                    },
+                    part.iter().map(|b| *b as i8).collect(),
+                )
+                .unwrap(),
+            );
+            frames.extend(decoder.consume(event).unwrap().frames);
+        }
+        frames.extend(
+            decoder
+                .consume(IqEvent::End(StreamEnd::Eof))
+                .unwrap()
+                .frames,
+        );
+        assert_eq!(frames.len(), expected.len());
+        for (a, b) in frames.iter().zip(&expected) {
+            assert_eq!(a.bytes, b.bytes);
+            assert_eq!(a.start.sample_index, b.start.sample_index);
+            assert_eq!(a.start.epoch, b.start.epoch);
+            assert_eq!(a.start.time_anchor, b.start.time_anchor);
+            assert_eq!(a.end_sample_index, b.end_sample_index);
+            assert!(a
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d, PhyDiagnostic::VhtSignal { .. })));
+        }
+    }
+}
