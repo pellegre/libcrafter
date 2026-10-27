@@ -10,11 +10,19 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "radio_support/vht_transmit.rs"]
+mod vht_transmit;
+
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const SCHEMA: &str = "crafter.radio.transmit/v1";
 
 #[derive(Clone, Copy)]
 enum CasePhy {
+    Vht20 {
+        mcs: VhtMcs,
+        coding: VhtCoding,
+        guard_interval: VhtGuardInterval,
+    },
     Legacy(LegacyWifiPhy),
     Ht20 {
         mcs: HtMcs,
@@ -142,7 +150,8 @@ fn cases(matrix: bool, family: &str) -> Result<Vec<Case>> {
     match family {
         "legacy" => Ok(legacy_cases(matrix)),
         "ht20" => Ok(ht20_cases(matrix)),
-        _ => Err(format!("unknown --family: {family}; expected legacy or ht20").into()),
+        "vht20" => Ok(vht_transmit::cases(matrix)),
+        _ => Err(format!("unknown --family: {family}; expected legacy, ht20 or vht20").into()),
     }
 }
 
@@ -163,6 +172,7 @@ fn packet(case_id: &str) -> Packet {
     let case_tag = legacy_cases(true)
         .into_iter()
         .chain(ht20_cases(true))
+        .chain(vht_transmit::cases(true))
         .position(|case| case.id == case_id)
         .expect("case ID comes from the closed transmit matrix") as u8;
     let payload = (0..72)
@@ -194,6 +204,11 @@ fn labels(phy: LegacyWifiPhy) -> (&'static str, u32, &'static str) {
 
 fn case_metadata(phy: CasePhy) -> Value {
     match phy {
+        CasePhy::Vht20 {
+            mcs,
+            coding,
+            guard_interval,
+        } => vht_transmit::metadata(mcs, coding, guard_interval),
         CasePhy::Legacy(phy) => {
             let (phy, rate_bps, preamble) = labels(phy);
             json!({"phy":phy,"rate_bps":rate_bps,"preamble":preamble})
@@ -242,6 +257,23 @@ fn run(
     let mut records = Vec::with_capacity(selected.len());
     for case in selected {
         let (mac_bytes, psdu_bytes, cs8, sample_count) = match case.phy {
+            CasePhy::Vht20 {
+                mcs,
+                coding,
+                guard_interval,
+            } => {
+                let config = VhtTxConfig::new(mcs)
+                    .with_coding(coding)
+                    .with_guard_interval(guard_interval);
+                let writer = RadioPacketWriter::new(config, MemoryIqSink::new());
+                let transmission = writer.encode_record(&PacketRecord::new(packet(&case.id)))?;
+                (
+                    transmission.mac_bytes.clone(),
+                    transmission.psdu_bytes.clone(),
+                    transmission.cs8.clone(),
+                    transmission.sample_count(),
+                )
+            }
             CasePhy::Legacy(phy) => {
                 let config = match phy {
                     LegacyWifiPhy::Ofdm(rate) => LegacyWifiTxConfig::ofdm(rate),
@@ -324,6 +356,24 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(any(feature = "radio-hackrf", test))]
 fn interface_config(case: &Case, frequency_hz: u64, scale: f64) -> WifiInterfaceConfig {
     let (transmit_phy, radio_encoder) = match case.phy {
+        CasePhy::Vht20 {
+            mcs,
+            coding,
+            guard_interval,
+        } => {
+            let mut encoder = VhtTxConfig::new(mcs)
+                .with_coding(coding)
+                .with_guard_interval(guard_interval);
+            encoder.scale = scale;
+            (
+                WifiPhy::Vht20 {
+                    mcs: mcs.index(),
+                    short_guard: guard_interval == VhtGuardInterval::Short,
+                    ldpc: coding == VhtCoding::Ldpc,
+                },
+                WifiPacketEncoder::Vht20(encoder),
+            )
+        }
         CasePhy::Legacy(phy) => match phy {
             LegacyWifiPhy::Ofdm(rate) => {
                 let mut encoder = LegacyWifiTxConfig::ofdm(rate);
@@ -552,7 +602,7 @@ mod tests {
                 Ok(())
             }
         }
-        for family in ["legacy", "ht20"] {
+        for family in ["legacy", "ht20", "vht20"] {
             let reference = run(true, family, None, Vec::new()).unwrap();
             for (case, reference) in cases(true, family).unwrap().into_iter().zip(reference) {
                 let captured = Arc::new(Mutex::new(Vec::new()));
