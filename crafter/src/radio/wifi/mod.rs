@@ -7,6 +7,7 @@ pub(in crate::radio) mod ofdm;
 mod parallel;
 mod recovery;
 mod tx;
+pub(in crate::radio) mod vht;
 mod windowed;
 
 pub(in crate::radio) use decoder::same_occurrence;
@@ -29,3 +30,8 @@ pub use tx::{
     WifiFcsPolicy, WifiPacketEncoder, WifiTxEncoder,
 };
 pub use windowed::{WindowedLegacyWifiDecoder, WindowedWifiDecoder};
+
+pub use vht::{
+    VhtCoding, VhtGuardInterval, VhtMcs, VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content,
+    VhtSignalB20Fields, VhtSignalError, VhtTxConfig,
+};

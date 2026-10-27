@@ -1,7 +1,7 @@
 {
   "schema": "crafter.wifi-phy-evidence/v1",
-  "reviewed_at": "2026-09-12",
-  "scope": "Raw Wi-Fi PHY bytes; RX correctness before performance and TX",
+  "reviewed_at": "2026-10-27",
+  "scope": "Raw legacy, HT20 and single-user VHT20 Wi-Fi PHY bytes",
   "rfc_discovery": {
     "query": "IEEE 802.11 Wi-Fi PHY",
     "selected_documents": [],
@@ -9,6 +9,14 @@
     "note": "RFC discovery yielded no PHY authority. IEEE publications supply the evidence below."
   },
   "sources": [
+    {
+      "id": "radiotap-vht-metadata",
+      "classification": "capture-metadata",
+      "authority_url": "https://www.radiotap.org/fields/VHT.html",
+      "retrieval_url": "https://raw.githubusercontent.com/radiotap/radiotap.github.io/master/fields/VHT.md",
+      "status": "complete_field_definition_reviewed",
+      "related_url": "https://raw.githubusercontent.com/radiotap/radiotap.github.io/master/fields/A-MPDU%20status.md"
+    },
     {
       "id": "radiotap-ht-metadata",
       "classification": "capture-metadata",
@@ -25,7 +33,35 @@
       "sha256": "d4b6c467609800746e29dff1ff2e9a01ace281bab9485b615d6ae78666ed7b00",
       "pdf_pages": 4379,
       "status": "published_text_obtained_selected_clauses_reviewed",
-      "reviewed_clauses": ["9.7.1-2", "10.27.4", "19.3.9.3.5", "19.3.9.4.3", "19.3.9.4.4", "19.3.9.4.5", "19.3.9.4.6", "19.3.11.1", "19.3.11.2", "19.3.11.3", "19.3.11.4", "19.3.11.6", "19.3.11.7.1-6", "19.3.11.8.3", "19.3.11.9.1", "19.3.11.10", "19.3.11.11.3", "19.5", "Annex F Tables F-1/F-2/F-3", "Annex O.1-2 (informative)"],
+      "reviewed_clauses": [
+        "9.7.1-2",
+        "10.27.4",
+        "19.3.9.3.5",
+        "19.3.9.4.3",
+        "19.3.9.4.4",
+        "19.3.9.4.5",
+        "19.3.9.4.6",
+        "19.3.11.1",
+        "19.3.11.2",
+        "19.3.11.3",
+        "19.3.11.4",
+        "19.3.11.6",
+        "19.3.11.7.1-6",
+        "19.3.11.8.3",
+        "19.3.11.9.1",
+        "19.3.11.10",
+        "19.3.11.11.3",
+        "19.5",
+        "Annex F Tables F-1/F-2/F-3",
+        "Annex O.1-2 (informative)",
+        "21.1.1",
+        "21.3.2",
+        "21.3.8.3.3",
+        "21.3.8.3.5-6",
+        "21.3.10.1-10",
+        "21.3.20",
+        "21.5 Table 21-29"
+      ],
       "superseded_by": "ieee-80211-2024"
     },
     {
@@ -36,7 +72,10 @@
       "sha256": "e6b6aa3301b23e84467c99c8460d0d990e1125e55e83a2bd5c7b3d0485b4036f",
       "pdf_pages": 767,
       "status": "published_text_obtained_selected_clauses_reviewed",
-      "reviewed_clauses": ["27.3.11.7.1", "27.3.11.7.3"]
+      "reviewed_clauses": [
+        "27.3.11.7.1",
+        "27.3.11.7.3"
+      ]
     },
     {
       "id": "ieee-80211-2024",
@@ -146,6 +185,78 @@
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.11.7.3, Figure 27-24",
       "fact": "HE-SIG-A CRC covers 42 bits. The underlying eight-bit polynomial is inherited from HT, but only four complemented output bits are transmitted, C7 first."
+    },
+    {
+      "id": "vht-one-data-stream-stbc",
+      "source": "ieee-80211-2020",
+      "anchor": "Tables 21-10/11/20; 21.3.8.3.5 Equations 21-40/41/43; 21.3.8.3.6 Equation 21-47; 21.3.10.10 Equation 21-91",
+      "fact": "VHT SU STBC maps one DATA stream to two space-time streams using the same conjugate-pair operation as HT. Two VHT-LTF data columns use the first two HT P-matrix columns, but every training pilot row repeats P's first row. Thus the two training pilot observations are the combined channel and its negative. SIG-B DATA uses the first P column, and its pilots are common across streams; for two streams both observe the combined channel. VHT20 DATA pilots use the single-stream rotating pattern regardless of STBC, unlike HT's two-stream pilot patterns. With two transmit chains, pre-VHT cyclic shifts are 0/-200 ns and VHT shifts are 0/-400 ns."
+    },
+    {
+      "id": "vht-ldpc-receive-length",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.20 Equations 21-107/108; forward construction 21.3.10.5.4",
+      "fact": "VHT LDPC receive length is the whole-octet capacity after removing the 16 SERVICE bits from initial-symbol-count times NDBPS; unlike BCC it removes no tail bits. The LDPC extra flag accounts for one extra symbol without STBC or two with STBC, consistently with the forward coding procedure. A decoded SIG-B must be checked against the CRC carried in descrambled SERVICE; final incomplete octets are discarded as padding."
+    },
+    {
+      "id": "vht-su-ldpc-rate-and-tones",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.10.5.4 Equations 21-61/62/63; 21.3.10.9.2 Table 21-19 and Equations 21-85/86",
+      "fact": "VHT SU LDPC reuses HT codeword selection and rate matching, but its encoded information includes scrambled SERVICE, PSDU and PHY padding. Npld is initial symbol count times NDBPS; initial symbols round (8*APEP_LENGTH+16) up to an STBC symbol group, and initial available coded bits are that count times NCBPS. SIG-A's extra-symbol bit records whether the puncturing rule adds a symbol group. For VHT20, LDPC tone mapping permutes whole constellation symbols with distance 4: input tone index k goes to 4*(k mod 13)+floor(k/13). BCC does not use this mapping."
+    },
+    {
+      "id": "radiotap-vht-known-fields",
+      "source": "radiotap-vht-metadata",
+      "anchor": "VHT field 21 known/flags, bandwidth and mcs_nss tables; A-MPDU field 20 EOF flags",
+      "fact": "VHT metadata is 12 bytes aligned to two bytes. GI and bandwidth validity use known bits 0x0004 and 0x0040; STBC, disambiguation, LDPC extra symbol, beamforming, group ID and partial AID have distinct validity bits. Radiotap bandwidth value 0 denotes 20 MHz; these codes are not SIG-A bandwidth codes. Each user byte has NSS in its low nibble and MCS in its high nibble; NSS zero invalidates that user's MCS/coding and MCS 15 means unknown. A present user's coding bit is meaningful without a separate known bit. NSS differs from NSTS when STBC is used. Group 0/63 means SU when group is known. A-MPDU EOF is meaningful only with flag 0x0080; its value is flag 0x0040."
+    },
+    {
+      "id": "vht-aggregate-framing",
+      "source": "ieee-80211-2020",
+      "anchor": "9.7.1-2 Table 9-527 Figure 9-976; 10.12.6-8",
+      "fact": "VHT delimiter B2..3 carry the high two length bits and B4..15 the low twelve; B0 is EOF and B1 reserved. EOF=1/nonzero length marks an S-MPDU, which must be the only nonzero-length subframe. EOF=1/zero length marks padding and cannot precede an S-MPDU. No EOF=0 subframe may follow EOF=1. Final alignment padding and zero to three trailing EOF octets have unspecified contents. The HT 65535-octet total limit does not apply to VHT; its 1048575-octet limit is pre-EOF."
+    },
+    {
+      "id": "vht20-siso-waveform",
+      "source": "ieee-80211-2020",
+      "anchor": "Table 21-8; Equations 21-28/29/36/47/91/95; 9.7.1; 10.12.6-8; 21.3.20 Equations 21-104/105/106",
+      "fact": "VHT-SIG-A uses BPSK then QBPSK data tones with unrotated pilots p1,p2. VHT-STF20 equals HT-STF20 and VHT-LTF20 equals HT-LTF20. VHT-SIG-B uses p3/P0; DATA uses p[n+4]/P[n]. Tone scaling uses 52 for L-LTF/L-SIG/SIG-A and 56 for VHT-LTF/SIG-B/DATA. A single nonzero-length delimiter may carry EOF=1 (S-MPDU); final subframe padding, EOF padding delimiters and trailing octets fill PSDU capacity under 10.12.6. RX symbol and PSDU length equations confirm the previously reviewed timing and BCC layout."
+    },
+    {
+      "id": "vht-bcc-data-layout",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.10.1-5; 21.4.3 Equation 21-112",
+      "fact": "For VHT BCC with one encoder, DATA consists of 16 SERVICE bits, PSDU, zero through seven PHY pad bits, then six zero tail bits. SERVICE/PSDU/pad are scrambled with a nonzero seed; tail is not scrambled. PSDU length is floor((NSYM*NDBPS-22)/8). SERVICE bits 0-7 are zero and bits 8-15 carry the SIG-B CRC, c7 first. The final BCC trellis state is zero, unlike the existing HT layout with scrambled padding after its tail."
+    },
+    {
+      "id": "vht20-one-stream-mcs",
+      "source": "ieee-80211-2020",
+      "anchor": "21.5 Table 21-29",
+      "fact": "For 20 MHz and one spatial stream, MCS 0-7 have 52 data tones and the same per-symbol coding/modulation dimensions as HT MCS 0-7. MCS 8 uses 256-QAM, rate 3/4, 416 coded bits and 312 data bits per symbol, with one BCC encoder. MCS 9 is explicitly not valid for this bandwidth and spatial-stream count."
+    },
+    {
+      "id": "vht-256qam-constellation",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.10.9.1; Figures 21-24 through 21-27, printed pages 3079-3082",
+      "fact": "Visually reviewed all four quadrants. Each axis uses levels -15,-13,-11,-9,-7,-5,-3,-1,1,3,5,7,9,11,13,15 with first-transmitted-bit-first labels 0000,0001,0011,0010,0110,0111,0101,0100,1100,1101,1111,1110,1010,1011,1001,1000. The first four bits label I and the next four Q. Complex constellation normalization is 1/sqrt(170)."
+    },
+    {
+      "id": "vht-receive-timing",
+      "source": "ieee-80211-2020",
+      "anchor": "Tables 21-5/12/13; 21.3.8.2.4 Equation 21-24; 21.3.10.9.4; 21.4.3 Equations 21-109/110",
+      "fact": "VHT uses 6 Mb/s L-SIG, whose length is three times the four-microsecond duration units after the initial 20 microseconds, minus three. VHT-LTF counts for 1..8 space-time streams are 1,2,4,4,6,6,8,8. DATA begins at 36+4*NLTF microseconds. Short-GI DATA has 3.6-microsecond symbols but its signaled duration rounds up to four-microsecond units. SIG-A disambiguation is one exactly when short GI is used and NSYM mod 10 equals 9. DATA symbol end and signaled duration can differ. STBC requires even symbol groups."
+    },
+    {
+      "id": "vht20-signal-b-service",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.8.3.6 Tables 21-14/15 and Equation 21-46; 21.3.10.2-3 Table 21-16 and Equation 21-59; 21.3.10.8; 21.3.12",
+      "fact": "VHT20 SIG-B has 20 field bits and six zero tail bits. SU uses 17 length bits and three reserved ones; MU uses 16 length bits and four MCS bits. Length is ceil(APEP_LENGTH/4). VHT NDP is SU, has no DATA, and uses the fixed pre-tail pattern 00000111010001000010. In MU that same pattern is ordinary length/MCS data. SIG-B's CRC covers its first 20 bits and is transmitted c7 first in descrambled SERVICE bits 8..15; SERVICE bits 0..7 are zero. The 20 MHz one-stream BPSK interleaver uses 13 columns and four rows. SIG-B parsing alone cannot assert CRC integrity."
+    },
+    {
+      "id": "vht-signal-a-fields",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.8.3.3, Table 21-12, Figures 21-18/19/20",
+      "fact": "VHT-SIG-A consists of two 24-bit parts, BCC encoded together at rate one-half and interleaved per 48-tone symbol. The first symbol's data tones use BPSK and the second QBPSK. Group IDs 0 and 63 select SU field interpretation; other IDs select four MU user positions. CRC covers the first 34 bits using the HT polynomial, followed by six zero tail bits. Bandwidth code 3 does not distinguish contiguous 160 MHz from 80+80 MHz. Header integrity alone does not admit the DATA configuration."
     }
   ],
   "unresolved_questions": [
@@ -158,5 +269,17 @@
     "This is a partial evidence inventory, not a claim of implemented or qualified modern PHY support.",
     "IEEE's interpretations page describes a historical process; absence of a listed interpretation is not proof of no corrections.",
     "Do not substitute drafts or secondary summaries for unreviewed published wire requirements."
+  ],
+  "corrections": [
+    {
+      "id": "ieee:802.11-2020:cor1:2022",
+      "authority_url": "https://standards.ieee.org/ieee/802.11-2020_Cor_1/10836/",
+      "review": "Publisher scope corrects Protected Announce Support in the RSN Extension element; no VHT PHY change."
+    },
+    {
+      "id": "ieee:802.11-2020:cor2:2024",
+      "authority_url": "https://standards.ieee.org/ieee/802.11-2020_Cor_2/11394/",
+      "review": "Publisher scope corrects the EBCS ANQP information identifier; no VHT PHY change."
+    }
   ]
 }

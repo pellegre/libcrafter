@@ -137,7 +137,7 @@ impl HtSignalFields {
     }
 }
 
-pub(super) fn crc(bits: &[u8]) -> u8 {
+pub(in crate::radio) fn crc(bits: &[u8]) -> u8 {
     let mut state = 255u8;
     for &bit in bits {
         let feedback = (state >> 7) ^ bit;
