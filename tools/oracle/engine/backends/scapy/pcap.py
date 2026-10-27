@@ -100,7 +100,7 @@ def write_pcap(
     *,
     capabilities: BackendCapabilities | BackendRegistration | None = None,
 ) -> list[JSONObject]:
-    """Write vectors to a classic pcap with Scapy ``wrpcap``."""
+    """Write the supplied vector bytes to a classic pcap with Scapy."""
 
     _require_capability(capabilities, "pcap_write", "write Scapy pcap")
     if not vectors:
@@ -108,16 +108,12 @@ def write_pcap(
 
     scapy_all = import_scapy()["all"]
     records: list[JSONObject] = []
-    decoded_packets: list[tuple[Any, JSONObject]] = []
+    packets: list[tuple[bytes, JSONObject]] = []
     for position, vector in enumerate(vectors):
         record = _vector_record(vector, position)
-        root = vector.root or vector.decoder or record["root"]
-        packet = _decode_packet_for_write(root, vector.to_bytes(), scapy_all)
         timestamp = _object(record["timestamp"], "timestamp")
-        if not isinstance(packet, (bytes, bytearray)):
-            packet.time = _decimal_timestamp(timestamp)
         records.append(record)
-        decoded_packets.append((packet, timestamp))
+        packets.append((vector.to_bytes(), timestamp))
 
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -128,17 +124,17 @@ def write_pcap(
         sync=True,
     )
     try:
-        for packet, timestamp in decoded_packets:
-            if isinstance(packet, (bytes, bytearray)):
-                if not bool(getattr(writer, "header_present", False)):
-                    writer.write_header(packet)
-                writer.write_packet(
-                    bytes(packet),
-                    sec=int(timestamp["seconds"]),
-                    usec=int(timestamp["fractional"]),
-                )
-            else:
-                writer.write(packet)
+        for packet, timestamp in packets:
+            if not bool(getattr(writer, "header_present", False)):
+                writer.write_header(packet)
+            fractional = int(timestamp["fractional"])
+            if timestamp["precision"] == "nanoseconds":
+                fractional //= 1_000
+            writer.write_packet(
+                packet,
+                sec=int(timestamp["seconds"]),
+                usec=fractional,
+            )
     finally:
         writer.close()
     return records
@@ -162,14 +158,9 @@ def read_pcap(
 
     records: list[JSONObject] = []
     for position, packet in enumerate(packets):
-        # Wi-Fi dissection can separate FCS from nested protocol padding;
-        # rebuilding that packet can reorder bytes. A capture reader reports
-        # the original record, not a newly serialized packet.
-        raw_hex = (
-            bytes(packet.original)
-            if root in {"link:dot11", "link:radiotap"}
-            else bytes(scapy_all.raw(packet))
-        ).hex()
+        # Dissection and rebuilding can insert options or reorder padding.
+        # A capture reader reports the original record bytes.
+        raw_hex = bytes(packet.original).hex()
         if root in {"link:bluetooth-le-ll-with-phdr", "link:dot11", "link:radiotap"}:
             decoded = decode_bytes(bytes.fromhex(raw_hex), root=root, source_hex=raw_hex)
         else:
@@ -298,66 +289,6 @@ def _datalink_for_link_type(link_type: str) -> int:
     return int(_link_type_object(link_type)["datalink"])
 
 
-def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> Any:
-    if root in {
-        # Preserve supplied Wi-Fi record bytes, including FCS and nested
-        # padding; Scapy's dissect/rebuild path is not byte-preserving here.
-        "Dot11",
-        "link:dot11",
-        "link:ieee80211",
-        "RadioTap",
-        "link:radiotap",
-        "BTLE_PHDR",
-        "link:bluetooth-le-ll-with-phdr",
-        "link:bluetooth_le_ll_with_phdr",
-        "Raw",
-        "link:raw",
-        "raw:tls",
-        "l3:ipv4",
-        "l3:ipv4-ntp",
-        "l3:ipv6",
-        "l3:ipv6-ntp",
-        "IP",
-        "IPv6",
-        # The IEEE 802.15.4 TAP (DLT 283) pseudo-header has no native Scapy
-        # dissector, so write its bytes verbatim like the BLE LL-with-PHDR form.
-        "link:ieee802154-tap",
-        "link:ieee802154_tap",
-    }:
-        return raw
-    decoder_name = {
-        "Ether": "Ether",
-        "link:ethernet": "Ether",
-        "CookedLinux": "CookedLinux",
-        "link:linux-cooked": "CookedLinux",
-        "link:linux-sll": "CookedLinux",
-        "Loopback": "Loopback",
-        "link:null-loopback": "Loopback",
-        "Dot11": "Dot11",
-        "link:dot11": "Dot11",
-        "link:ieee80211": "Dot11",
-        "Dot15d4FCS": "Dot15d4FCS",
-        "Dot15d4": "Dot15d4FCS",
-        "link:ieee802154": "Dot15d4FCS",
-        "RadioTap": "RadioTap",
-        "link:radiotap": "RadioTap",
-        "Raw": "Raw",
-        "link:raw": "Raw",
-        "l3:ipv4": "IP",
-        "l3:ipv4-ntp": "IP",
-        "IP": "IP",
-        "l3:ipv6": "IPv6",
-        "l3:ipv6-ntp": "IPv6",
-        "IPv6": "IPv6",
-    }.get(root or "link:ethernet")
-    if decoder_name is None:
-        raise ValueError(f"unsupported pcap write root: {root!r}")
-    decoder = getattr(scapy_all, decoder_name, None)
-    if decoder is None:
-        raise ValueError(f"Scapy decoder is unavailable: {decoder_name}")
-    return decoder(raw)
-
-
 def _vector_record(vector: EncodedVector, position: int) -> JSONObject:
     metadata = _object(vector.metadata, "vector.metadata")
     record = metadata.get("pcap_record")
@@ -396,14 +327,6 @@ def _packet_timestamp(packet: Any, precision: str) -> JSONObject:
         "precision": precision,
         "nanos": fractional if precision == "nanoseconds" else fractional * 1_000,
     }
-
-
-def _decimal_timestamp(timestamp: JSONObject) -> Decimal:
-    seconds = int(timestamp["seconds"])
-    fractional = int(timestamp["fractional"])
-    precision = _string(timestamp["precision"], "precision")
-    units = Decimal(1_000_000_000 if precision == "nanoseconds" else 1_000_000)
-    return Decimal(seconds) + (Decimal(fractional) / units)
 
 
 def _link_type_object(name: str, *, datalink: int | None = None) -> JSONObject:

@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from tools.oracle.engine.backends.scapy import normalize, packets, pcap
+from tools.oracle.engine.backends.scapy.bootstrap import import_scapy
 from tools.oracle.engine.backends.scapy.protocols import SCAPY_REGISTRY
 from tools.oracle.engine.backends.scapy.protocols import ethernet as ethernet_scapy
 from tools.oracle.engine.backends.scapy.protocols import ipv4 as ipv4_scapy
@@ -17,7 +18,7 @@ from tools.oracle.engine.backends.scapy.protocols import ripng as ripng_scapy
 from tools.oracle.engine.backends.scapy.protocols import sctp as sctp_scapy
 from tools.oracle.engine.backends.scapy.protocols import udp as udp_scapy
 from tools.oracle.engine.generator import generate_plans
-from tools.oracle.engine.model import PacketPlan
+from tools.oracle.engine.model import EncodedVector, PacketPlan
 
 
 L2_IPV4_PLAN = PacketPlan(
@@ -541,6 +542,58 @@ class ScapyDot11NormalizationTest(unittest.TestCase):
             decoded.fields["rsn"]["group_cipher_suite"]["label"], "ccmp-128"
         )
         self.assertEqual(decoded.fields["rsn"]["akm_suites"][0]["label"], "psk")
+
+
+class ScapyPcapWireBytesTest(unittest.TestCase):
+    def test_ip_options_and_igmp_fields_survive_pcap_dissection(self) -> None:
+        scapy = import_scapy()["all"]
+        for options in (b"", bytes.fromhex("94040000"), b"\x01" * 4):
+            for body in ("1164ee9b00000000", "fe00abcd01020304"):
+                ip = bytes(
+                    scapy.IP(
+                        src="192.0.2.10", dst="224.0.0.1", proto=2, options=options
+                    )
+                    / scapy.Raw(bytes.fromhex(body))
+                )
+                for root, raw, link_type in (
+                    ("l3:ipv4", ip, "raw"),
+                    (
+                        "link:ethernet",
+                        bytes.fromhex("00005e00530100005e0053020800") + ip,
+                        "ethernet",
+                    ),
+                    (
+                        "link:ethernet",
+                        bytes.fromhex("00005e00530100005e005302810000070800") + ip,
+                        "ethernet",
+                    ),
+                ):
+                    with self.subTest(
+                        options=options.hex(), body=body, root=root, length=len(raw)
+                    ):
+                        plan = _igmp_plan({}, case="pcap-wire-bytes", feature="igmp_header")
+                        vector = pcap.with_pcap_metadata(
+                            [EncodedVector.from_bytes(
+                                plan=plan, backend="scapy", raw=raw, root=root
+                            )],
+                            link_type=link_type,
+                        )[0]
+                        with tempfile.TemporaryDirectory() as temp_dir:
+                            path = Path(temp_dir) / "original.pcap"
+                            pcap.write_pcap(path, [vector])
+                            # Verify disk bytes independently of the capture reader.
+                            self.assertEqual(path.read_bytes()[40:], raw)
+                            record = pcap.read_pcap(path)[0]
+                        self.assertEqual(record["raw_hex"], raw.hex())
+                        self.assertEqual(
+                            record["link_type"], vector.metadata["pcap_record"]["link_type"]
+                        )
+                        self.assertEqual(
+                            record["timestamp"], vector.metadata["pcap_record"]["timestamp"]
+                        )
+                        self.assertEqual(
+                            record["decoded"]["fields"]["igmp"]["type"], int(body[:2], 16)
+                        )
 
 
 class ScapyDot11PcapTest(unittest.TestCase):
