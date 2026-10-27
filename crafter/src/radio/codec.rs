@@ -1,7 +1,10 @@
 use super::{
     error::RadioResult,
     transport::{Discontinuity, IqEvent, IqPosition, RxConfig, StreamEnd},
-    wifi::ht::HtSignalFields,
+    wifi::{
+        ht::HtSignalFields,
+        vht::{VhtSignalAFields, VhtSignalB20Fields},
+    },
 };
 use crate::LinkType;
 
@@ -14,7 +17,17 @@ pub enum ResetReason {
 
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
-    /// Byte offset of this MPDU's delimiter within its HT A-MPDU PSDU.
+    /// Integrity-checked VHT-SIG-A; DATA support and MAC integrity are separate.
+    VhtSignal {
+        fields: VhtSignalAFields,
+        preamble_sample_index: u64,
+    },
+    /// SIG-B whose CRC linkage was validated against decoded DATA SERVICE.
+    VhtSignalB {
+        fields: VhtSignalB20Fields,
+        preamble_sample_index: u64,
+    },
+    /// Byte offset of this MPDU's delimiter within its HT or VHT A-MPDU PSDU.
     /// Frame sample coordinates describe the entire containing PPDU.
     Ampdu {
         delimiter_offset: usize,
@@ -93,6 +106,26 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::VhtSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::VhtSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::VhtSignalB {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::VhtSignalB {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
             (
                 Self::LdpcPartial {
                     failed_codewords: a,

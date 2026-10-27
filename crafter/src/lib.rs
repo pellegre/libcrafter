@@ -156,8 +156,8 @@ pub use radio::{
     LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
     OwnedSamples, PacketEncoder, RadioPacketWriter, SampleCompletion, SampleFormat, VhtCoding,
     VhtGuardInterval, VhtMcs, VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content,
-    VhtSignalB20Fields, VhtSignalError, VhtTxConfig, WifiDecoder, WifiFcsPolicy, WifiPacketEncoder,
-    WifiTxEncoder,
+    VhtSignalB20Fields, VhtSignalBits, VhtSignalError, VhtTransmission, VhtTxConfig, WifiDecoder,
+    WifiFcsPolicy, WifiPacketEncoder, WifiTxEncoder,
 };
 #[cfg(feature = "radio-hackrf")]
 pub use radio::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
@@ -269,8 +269,9 @@ pub mod prelude {
         LegacyOfdmTransmission, LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission,
         LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields, OwnedSamples, PacketEncoder,
         RadioPacketWriter, SampleCompletion, SampleFormat, VhtCoding, VhtGuardInterval, VhtMcs,
-        VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content, VhtSignalB20Fields, VhtSignalError,
-        VhtTxConfig, WifiDecoder, WifiFcsPolicy, WifiPacketEncoder, WifiTxEncoder,
+        VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content, VhtSignalB20Fields, VhtSignalBits,
+        VhtSignalError, VhtTransmission, VhtTxConfig, WifiDecoder, WifiFcsPolicy,
+        WifiPacketEncoder, WifiTxEncoder,
     };
     #[cfg(feature = "radio-hackrf")]
     pub use crate::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};

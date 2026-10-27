@@ -3,7 +3,7 @@
 //! normalized min-sum is a receiver implementation choice, not a wire rule.
 mod encoder;
 mod matrices;
-pub(super) mod rate;
+pub(in crate::radio) mod rate;
 
 use matrices::{
     H_1296_1_2, H_1296_2_3, H_1296_3_4, H_1296_5_6, H_1944_1_2, H_1944_2_3, H_1944_3_4, H_1944_5_6,
@@ -11,14 +11,14 @@ use matrices::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Rate {
+pub(in crate::radio) enum Rate {
     Half,
     TwoThirds,
     ThreeQuarters,
     FiveSixths,
 }
 impl Rate {
-    pub(super) fn ratio(self) -> (usize, usize) {
+    pub(in crate::radio) fn ratio(self) -> (usize, usize) {
         match self {
             Self::Half => (1, 2),
             Self::TwoThirds => (2, 3),
@@ -37,7 +37,7 @@ impl Rate {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     CodeLength,
     InformationCount {
         required: usize,
@@ -62,19 +62,19 @@ pub(super) enum Error {
         failed_checks: usize,
     },
 }
-pub(super) struct Code {
-    pub(super) n: usize,
-    pub(super) k: usize,
+pub(in crate::radio) struct Code {
+    pub(in crate::radio) n: usize,
+    pub(in crate::radio) k: usize,
     rate: Rate,
-    pub(super) checks: Vec<Vec<usize>>,
+    pub(in crate::radio) checks: Vec<Vec<usize>>,
 }
-pub(super) struct Estimate {
+pub(in crate::radio) struct Estimate {
     pub bits: Vec<u8>,
     pub iterations: usize,
     pub failed_checks: usize,
 }
 impl Code {
-    pub(super) fn new(n: usize, rate: Rate) -> Result<Self, Error> {
+    pub(in crate::radio) fn new(n: usize, rate: Rate) -> Result<Self, Error> {
         let prototype: &[[i8; 24]] = match (n, rate) {
             (648, Rate::Half) => &H_648_1_2,
             (648, Rate::TwoThirds) => &H_648_2_3,
@@ -112,20 +112,24 @@ impl Code {
             checks,
         })
     }
-    pub(super) fn failed_checks(&self, bits: &[u8]) -> usize {
+    pub(in crate::radio) fn failed_checks(&self, bits: &[u8]) -> usize {
         self.checks
             .iter()
             .filter(|row| row.iter().fold(0, |p, &i| p ^ bits[i]) != 0)
             .count()
     }
-    pub(super) fn encode(&self, information: &[u8]) -> Result<Vec<u8>, Error> {
+    pub(in crate::radio) fn encode(&self, information: &[u8]) -> Result<Vec<u8>, Error> {
         encoder::encode(self, information)
     }
     /// Positive input favors one, consistent with the OFDM demapper. At most
     /// 64 layered normalized-min-sum iterations; only zero-syndrome words exit.
     /// This is not MAC integrity: the caller must still validate SERVICE/FCS.
     #[cfg(test)]
-    pub(super) fn decode(&self, metrics: &[f32], limit: usize) -> Result<(Vec<u8>, usize), Error> {
+    pub(in crate::radio) fn decode(
+        &self,
+        metrics: &[f32],
+        limit: usize,
+    ) -> Result<(Vec<u8>, usize), Error> {
         let estimate = self.estimate(metrics, limit)?;
         if estimate.failed_checks != 0 {
             return Err(Error::Nonconvergence {
@@ -137,7 +141,11 @@ impl Code {
     }
     /// Tentative information bits at the bounded stopping point. Nonzero
     /// syndrome is explicit; these bits are NOT integrity-checked payload.
-    pub(super) fn estimate(&self, metrics: &[f32], limit: usize) -> Result<Estimate, Error> {
+    pub(in crate::radio) fn estimate(
+        &self,
+        metrics: &[f32],
+        limit: usize,
+    ) -> Result<Estimate, Error> {
         if metrics.len() != self.n {
             return Err(Error::MetricCount {
                 required: self.n,

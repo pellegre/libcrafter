@@ -1,12 +1,11 @@
 //! HT20 receive, transmit, signaling, training, coding, and aggregation.
 
-pub(super) mod ampdu;
 pub(super) mod ldpc;
 pub(super) mod rx;
 mod signal;
 pub(super) mod stbc;
 mod training;
-mod tx;
+pub(in crate::radio) mod tx;
 
 pub use signal::{HtSignalError, HtSignalFields};
 pub use tx::{

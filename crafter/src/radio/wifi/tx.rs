@@ -10,6 +10,7 @@ use super::dsss::{
 };
 use super::ht::{HtTransmission, HtTxConfig};
 use super::ofdm::{LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig};
+use super::vht::{VhtTransmission, VhtTxConfig};
 use crate::{wire::PacketRecord, Dot11};
 
 /// Legacy and HT20 encoders behind the same protocol-independent sample contract.
@@ -17,6 +18,7 @@ use crate::{wire::PacketRecord, Dot11};
 pub enum WifiPacketEncoder {
     Legacy(LegacyWifiTxConfig),
     Ht20(HtTxConfig),
+    Vht20(VhtTxConfig),
 }
 
 impl PacketEncoder for WifiPacketEncoder {
@@ -32,6 +34,7 @@ impl PacketEncoder for WifiPacketEncoder {
         match self {
             Self::Legacy(config) => config.encode_packet(record).map(owned),
             Self::Ht20(config) => config.encode_packet(record).map(owned),
+            Self::Vht20(config) => config.encode_packet(record).map(owned),
         }
     }
 }
@@ -143,6 +146,29 @@ pub trait EncodedWifiTransmission: Clone {
 
     fn sample_count(&self) -> usize {
         self.cs8().len() / 2
+    }
+}
+
+impl EncodedWifiTransmission for VhtTransmission {
+    fn mac_bytes(&self) -> &[u8] {
+        &self.mac_bytes
+    }
+    fn psdu_bytes(&self) -> &[u8] {
+        &self.psdu_bytes
+    }
+    fn cs8(&self) -> &[i8] {
+        &self.cs8
+    }
+}
+
+impl WifiTxEncoder for VhtTxConfig {
+    type Transmission = VhtTransmission;
+    fn encode_mac(&self, mac_bytes: &[u8]) -> RadioResult<Self::Transmission> {
+        let fcs = match self.fcs {
+            WifiFcsPolicy::Auto => None,
+            WifiFcsPolicy::Explicit(bytes) => Some(bytes),
+        };
+        VhtTransmission::encode(mac_bytes, fcs, self)
     }
 }
 

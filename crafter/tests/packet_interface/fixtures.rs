@@ -489,6 +489,13 @@ fn radio_encoder_overrides_survive_the_public_interface() {
     ht.leading_samples = 23;
     ht.fcs = WifiFcsPolicy::Explicit([5, 6, 7, 8]);
     let expected_ht = ht.encode_packet(&record).unwrap().cs8().to_vec();
+    let mut vht = VhtTxConfig::new(VhtMcs::Mcs8)
+        .with_coding(VhtCoding::Ldpc)
+        .with_guard_interval(VhtGuardInterval::Short);
+    vht.leading_samples = 29;
+    vht.scale = 350.;
+    vht.fcs = WifiFcsPolicy::Explicit([9, 10, 11, 12]);
+    let expected_vht = vht.encode_packet(&record).unwrap().cs8().to_vec();
     for (encoder, phy, expected) in [
         (
             WifiPacketEncoder::Legacy(legacy),
@@ -504,6 +511,15 @@ fn radio_encoder_overrides_survive_the_public_interface() {
                 ldpc: false,
             },
             expected_ht,
+        ),
+        (
+            WifiPacketEncoder::Vht20(vht),
+            WifiPhy::Vht20 {
+                mcs: 8,
+                short_guard: true,
+                ldpc: true,
+            },
+            expected_vht,
         ),
     ] {
         let captured = Arc::new(Mutex::new(Vec::new()));

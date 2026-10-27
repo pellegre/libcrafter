@@ -23,5 +23,7 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - VHT20 signaling and single-stream transmit configuration are provided.
+      - VHT20 SU RX and TX cover MCS0-8, both guard intervals, BCC and LDPC.
+      - 235 independent receive waveforms and 11 rejection controls check exact MPDUs.
+      - One-data-stream VHT STBC, MU and wider channels are outside this contract.
       - Hardware qualification is external to the deterministic contract.

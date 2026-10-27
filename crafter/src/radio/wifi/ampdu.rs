@@ -1,6 +1,7 @@
-//! HT A-MPDU framing, IEEE 802.11-2020 9.7.1–2 and informative Annex O.2.
+//! HT and VHT A-MPDU framing, IEEE 802.11-2020 9.7.1–2 and informative Annex O.2.
 //! Only FCS-valid MPDUs are emitted. Bad FCS resumes four-byte scanning too,
 //! so a false delimiter cannot hide a later valid MPDU inside its stated span.
+use crate::radio::{DecodeOutput, PhyDiagnostic, RadioError, RadioResult, RecoveredFrame};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::radio::wifi) enum Error {
@@ -11,6 +12,8 @@ pub(in crate::radio::wifi) enum Error {
     TruncatedMpdu { required: usize, available: usize },
     MpduLimit { limit: usize, available: usize },
     BadFcs,
+    VhtOrder,
+    ReservedBit,
     TrailingPadding { available: usize },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +24,9 @@ pub(super) struct Delimiter {
 }
 impl Delimiter {
     pub(super) fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        Self::decode_format(bytes, false)
+    }
+    pub(in crate::radio::wifi) fn decode_format(bytes: &[u8], vht: bool) -> Result<Self, Error> {
         if bytes.len() < 4 {
             return Err(Error::TruncatedDelimiter {
                 required: 4,
@@ -32,7 +38,7 @@ impl Delimiter {
         }
         let bits = std::array::from_fn::<_, 16, _>(|i| (bytes[i / 8] >> (i % 8)) & 1);
         // C7 is B16, the first transmitted (low) bit of the CRC octet.
-        let expected = super::signal::crc(&bits).reverse_bits();
+        let expected = super::ht::crc(&bits).reverse_bits();
         if bytes[2] != expected {
             return Err(Error::Crc {
                 expected,
@@ -41,7 +47,12 @@ impl Delimiter {
         }
         let header = u16::from_le_bytes([bytes[0], bytes[1]]);
         Ok(Self {
-            mpdu_bytes: usize::from(header >> 4),
+            mpdu_bytes: usize::from(header >> 4)
+                | if vht {
+                    usize::from(header & 12) << 10
+                } else {
+                    0
+                },
             control_bits: bytes[0] & 15,
         })
     }
@@ -66,12 +77,23 @@ pub(in crate::radio::wifi) struct Scan<'a> {
     offset: usize,
     max_mpdu: usize,
     pending: Option<Event<'a>>,
+    vht: bool,
+    eof: bool,
+    smpdu: bool,
+    frames: usize,
 }
 impl<'a> Scan<'a> {
     pub(in crate::radio::wifi) fn new(bytes: &'a [u8], max_mpdu: usize) -> Result<Self, Error> {
-        if bytes.len() > 65535 {
+        Self::with_format(bytes, max_mpdu, false)
+    }
+    pub(in crate::radio::wifi) fn vht(bytes: &'a [u8], max_mpdu: usize) -> Result<Self, Error> {
+        Self::with_format(bytes, max_mpdu, true)
+    }
+    fn with_format(bytes: &'a [u8], max_mpdu: usize, vht: bool) -> Result<Self, Error> {
+        let limit = if vht { 1_048_575 } else { 65535 };
+        if bytes.len() > limit {
             return Err(Error::AggregateLength {
-                limit: 65535,
+                limit,
                 available: bytes.len(),
             });
         }
@@ -80,6 +102,10 @@ impl<'a> Scan<'a> {
             offset: 0,
             max_mpdu,
             pending: None,
+            vht,
+            eof: false,
+            smpdu: false,
+            frames: 0,
         })
     }
 }
@@ -95,6 +121,9 @@ impl<'a> Iterator for Scan<'a> {
         }
         if self.bytes.len() - offset < 4 {
             self.offset = self.bytes.len();
+            if self.vht {
+                return None;
+            }
             return Some(Event::Invalid {
                 offset,
                 error: Error::TruncatedDelimiter {
@@ -104,11 +133,36 @@ impl<'a> Iterator for Scan<'a> {
             });
         }
         self.offset += 4; // Resynchronize on the next aligned candidate after errors.
-        let delimiter = match Delimiter::decode(&self.bytes[offset..offset + 4]) {
+        let parsed = if self.vht {
+            Delimiter::decode_format(&self.bytes[offset..offset + 4], true)
+        } else {
+            Delimiter::decode(&self.bytes[offset..offset + 4])
+        };
+        let delimiter = match parsed {
             Ok(d) => d,
             Err(error) => return Some(Event::Invalid { offset, error }),
         };
+        let eof = delimiter.control_bits & 1 != 0;
+        if self.vht {
+            if delimiter.control_bits & 2 != 0 {
+                return Some(Event::Invalid {
+                    offset,
+                    error: Error::ReservedBit,
+                });
+            }
+            if (self.eof && !eof)
+                || (delimiter.mpdu_bytes != 0 && (self.smpdu || (eof && self.frames != 0)))
+            {
+                return Some(Event::Invalid {
+                    offset,
+                    error: Error::VhtOrder,
+                });
+            }
+        }
         if delimiter.mpdu_bytes == 0 {
+            if self.vht && eof {
+                self.eof = true;
+            }
             return Some(Event::Empty {
                 delimiter_offset: offset,
             });
@@ -134,16 +188,23 @@ impl<'a> Iterator for Scan<'a> {
         }
         let end = offset + 4 + delimiter.mpdu_bytes;
         let bytes = &self.bytes[offset + 4..end];
-        if !super::super::ofdm::demod::valid_fcs(bytes) {
+        if !super::ofdm::demod::valid_fcs(bytes) {
             return Some(Event::Invalid {
                 offset,
                 error: Error::BadFcs,
             });
         }
+        if self.vht {
+            self.frames += 1;
+            self.eof = eof;
+            self.smpdu = eof;
+        }
         self.offset = end;
         if end < self.bytes.len() {
             let padding = (4 - end % 4) % 4;
-            if self.bytes.len() - end <= padding {
+            if self.vht {
+                self.offset += padding.min(self.bytes.len() - end);
+            } else if self.bytes.len() - end <= padding {
                 self.pending = Some(Event::Invalid {
                     offset: end,
                     error: Error::TrailingPadding {
@@ -175,7 +236,7 @@ mod tests {
     }
     #[test]
     fn radio_ampdu_independent_delimiter_crc_and_fields() {
-        let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/ampdu-delimiters.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/ampdu-delimiters.tsv")
             .lines()
             .skip(1)
             .collect();
@@ -208,7 +269,7 @@ mod tests {
     }
     #[test]
     fn radio_ampdu_independent_boundaries_and_resynchronization() {
-        let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/ampdu-index.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/ampdu-index.tsv")
             .lines()
             .skip(1)
             .collect();
@@ -255,4 +316,98 @@ mod tests {
         ));
         assert!(Scan::new(&[], 4095).unwrap().next().is_none());
     }
+}
+
+pub(in crate::radio) struct AggregateCounts {
+    pub valid_frames: u64,
+    pub invalid_fcs: u64,
+}
+
+pub(in crate::radio) fn publish(
+    mut frame: RecoveredFrame,
+    limit: usize,
+    out: &mut DecodeOutput,
+    members: Option<&[std::ops::Range<usize>]>,
+    vht: bool,
+) -> RadioResult<AggregateCounts> {
+    let bytes = std::mem::take(&mut frame.bytes);
+    let scan = (if vht {
+        Scan::vht(&bytes, frame.config.max_frame_bytes)
+    } else {
+        Scan::new(&bytes, frame.config.max_frame_bytes)
+    })
+    .map_err(|_| RadioError::Limit {
+        context: if vht {
+            "VHT aggregate bytes"
+        } else {
+            "HT aggregate bytes"
+        },
+        limit: if vht { 1_048_575 } else { 65535 },
+        actual: bytes.len() as u64,
+    })?;
+    let (mut delimiters, mut fcs, mut truncated, mut oversized) = (0, 0, 0, 0);
+    let mut valid_frames = 0u64;
+    let verified = members.into_iter().flatten().map(|range| {
+        // Ranges originate in Scan and are retained only across equal-length
+        // PSDUs. Their complete checked delimiter and MPDU bytes stay intact.
+        let member = &bytes[range.clone()];
+        let delimiter = Delimiter::decode_format(&member[..4], vht).unwrap();
+        Event::Frame {
+            delimiter_offset: range.start,
+            control_bits: delimiter.control_bits,
+            bytes: &member[4..],
+        }
+    });
+    for event in scan
+        .filter(|event| members.is_none() || !matches!(event, Event::Frame { .. }))
+        .chain(verified)
+    {
+        match event {
+            Event::Frame {
+                delimiter_offset,
+                control_bits,
+                bytes,
+            } => {
+                if out.frames.len() >= limit {
+                    return Err(RadioError::Limit {
+                        context: if vht {
+                            "VHT aggregate pending frames"
+                        } else {
+                            "HT aggregate pending frames"
+                        },
+                        limit: limit as u64,
+                        actual: (out.frames.len() + 1) as u64,
+                    });
+                }
+                let mut recovered = frame.clone();
+                recovered.bytes = bytes.to_vec();
+                recovered.diagnostics.push(PhyDiagnostic::Ampdu {
+                    delimiter_offset,
+                    control_bits,
+                });
+                out.frames.push(recovered);
+                valid_frames = valid_frames.saturating_add(1);
+            }
+            Event::Empty { .. } => {}
+            Event::Invalid { error, .. } => match error {
+                Error::BadFcs => fcs += 1,
+                Error::TruncatedMpdu { .. } => truncated += 1,
+                Error::MpduLimit { .. } => oversized += 1,
+                _ => delimiters += 1,
+            },
+        }
+    }
+    if delimiters + fcs + truncated + oversized != 0 {
+        out.diagnostics.push(PhyDiagnostic::AmpduErrors {
+            preamble_sample_index: frame.start.sample_index,
+            invalid_delimiters: delimiters,
+            invalid_fcs: fcs,
+            truncated_mpdus: truncated,
+            oversized_mpdus: oversized,
+        });
+    }
+    Ok(AggregateCounts {
+        valid_frames,
+        invalid_fcs: fcs as u64,
+    })
 }

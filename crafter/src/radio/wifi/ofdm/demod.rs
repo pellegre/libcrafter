@@ -22,6 +22,13 @@ fn axis(label: usize, width: usize) -> f32 {
     match width {
         1 => sign,
         2 => sign * (3. - 2. * ((label >> 1) & 1) as f32),
+        4 => {
+            sign * (8.
+                - (2. * ((label >> 1) & 1) as f32 - 1.)
+                    * (4.
+                        - (2. * ((label >> 2) & 1) as f32 - 1.)
+                            * (3. - 2. * ((label >> 3) & 1) as f32)))
+        }
         _ => {
             sign * (4.
                 - (2. * ((label >> 1) & 1) as f32 - 1.) * (3. - 2. * ((label >> 2) & 1) as f32))
@@ -45,11 +52,11 @@ fn demap(value: f32, width: usize, scale: f32, weight: f32, out: &mut Vec<f32>) 
 fn demap_boundaries(value: f32, width: usize, scale: f32, out: &mut Vec<f32>) {
     let x = value * scale;
     out.push(x);
-    if width >= 2 {
-        out.push((if width == 2 { 2. } else { 4. }) - x.abs());
-    }
-    if width == 3 {
-        out.push(2. - (4. - x.abs()).abs());
+    let mut residual = x.abs();
+    for exponent in (1..width).rev() {
+        let threshold = (1usize << exponent) as f32;
+        out.push(threshold - residual);
+        residual = (threshold - residual).abs();
     }
 }
 
@@ -209,6 +216,51 @@ pub(in crate::radio) fn demodulate_data_profile(
     stbc_second: Option<&[ComplexSample; 64]>,
     profile: Profile,
 ) -> Result<(Vec<f32>, PhyDiagnostic), ()> {
+    demodulate_data_format(
+        samples,
+        a,
+        info,
+        ht_guard,
+        bcc_interleaving,
+        greenfield,
+        stbc_second,
+        false,
+        profile,
+    )
+}
+
+pub(in crate::radio) fn demodulate_vht_data_profile(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    info: SignalInfo,
+    guard: usize,
+    bcc: bool,
+    profile: Profile,
+) -> Result<(Vec<f32>, PhyDiagnostic), ()> {
+    demodulate_data_format(
+        samples,
+        a,
+        info,
+        Some(guard),
+        bcc,
+        false,
+        None,
+        true,
+        profile,
+    )
+}
+
+fn demodulate_data_format(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    info: SignalInfo,
+    ht_guard: Option<usize>,
+    bcc_interleaving: bool,
+    greenfield: bool,
+    stbc_second: Option<&[ComplexSample; 64]>,
+    vht: bool,
+    profile: Profile,
+) -> Result<(Vec<f32>, PhyDiagnostic), ()> {
     if (profile.correct_iq || profile.mmse) && stbc_second.is_some() {
         return Err(());
     }
@@ -269,11 +321,15 @@ pub(in crate::radio) fn demodulate_data_profile(
         1 => 1.,
         2 => 2.,
         4 => 10.,
-        _ => 42.,
+        6 => 42.,
+        8 => 170.,
+        _ => return Err(()),
     };
     let mut coded = Vec::with_capacity(info.data_symbols * info.coded_bits_per_symbol);
     let mut pilot_state = 127;
-    for _ in 0..if greenfield {
+    for _ in 0..if vht {
+        4
+    } else if greenfield {
         2
     } else if ht_guard.is_some() {
         3
@@ -524,6 +580,13 @@ pub(in crate::radio) fn demodulate_data_profile(
 }
 
 fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
+    descramble_psdu(recover_bcc_bits(coded, info, false)?, info.psdu_bytes)
+}
+
+pub(in crate::radio) fn recover_vht_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
+    recover_bcc_bits(coded, info, true)
+}
+fn recover_bcc_bits(coded: &[f32], info: SignalInfo, vht: bool) -> Result<Vec<u8>, ()> {
     let pattern: &[u8] = if info.data_bits_per_symbol * 2 == info.coded_bits_per_symbol {
         &[1, 1]
     } else if info.data_bits_per_symbol * 3 == info.coded_bits_per_symbol * 2 {
@@ -538,7 +601,11 @@ fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
     // Six nonscrambled TAIL zeros terminate this encoder before PAD. Trace
     // only through that boundary; padding must not choose the PSDU's path.
     // IEEE 802.11-2020 17.3.5.3 and 19.3.11.1 (one BCC encoder).
-    let count = 16 + 8 * info.psdu_bytes + 6;
+    let count = if vht {
+        info.data_symbols * info.data_bits_per_symbol
+    } else {
+        16 + 8 * info.psdu_bytes + 6
+    };
     let mut metric = [f32::INFINITY; 64];
     metric[0] = 0.;
     let mut history = vec![[0u8; 64]; count];
@@ -569,7 +636,7 @@ fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
         // Once every state has an invalid SERVICE field, no final traceback can
         // produce a deliverable frame. Keep all possible states, not just the
         // currently cheapest path, to preserve the full decoder's decisions.
-        if t == 47 && !possible_service_prefix(&history[..48]) {
+        if !vht && t == 47 && !possible_service_prefix(&history[..48]) {
             return Err(());
         }
         let minimum = next.iter().copied().fold(f32::INFINITY, f32::min);
@@ -584,7 +651,7 @@ fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
         bits[t] = (state & 1) as u8;
         state = history[t][state] as usize;
     }
-    descramble_psdu(bits, info.psdu_bytes)
+    Ok(bits)
 }
 
 pub(in crate::radio) fn descramble_psdu(
