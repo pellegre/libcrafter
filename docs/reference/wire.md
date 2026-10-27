@@ -40,7 +40,7 @@ records that are not ready yet while keeping every stream item packet-shaped.
 receive and transmit. `WifiBackend::Monitor` opens an externally prepared live
 monitor interface; `MonitorAdapters` accepts opened capture/writer adapters,
 including offline fixtures. With `radio`, `RadioAdapters` connects an
-`IqSource` and `IqSink<OwnedSamples>` to the combined legacy/HT20 `WifiDecoder`
+`IqSource` and `IqSink<OwnedSamples>` to the combined legacy/HT20/VHT20 `WifiDecoder`
 and selected packet encoder. With `radio-hackrf`, `HackRf { rx, tx }` opens the
 native shared owner, while `HackRfOpened { duplex }` reuses an existing one.
 After construction, all paths use the same `PacketSource`, `PacketWriter`,
@@ -50,7 +50,7 @@ receive/annotate/transmit function for two offline backends.
 
 `WifiInterfaceConfig` specifies center frequency, optional channel number,
 20 MHz width, `WifiDirections`, and `WifiPhy` transmit selection. The PHY
-selection supports the legacy rates and single-stream HT20 matrix documented
+selection supports the legacy rates and single-stream HT20/VHT20 matrices documented
 in [radio.md](../radio.md). Receive uses the combined decoder independently
 of the selected transmit rate. Configure the monitor interface and channel
 through the operating system before opening the backend. `radio_encoder`

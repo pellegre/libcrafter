@@ -12,7 +12,8 @@ including the existing shared WPA transform, is separate from physical-layer
 byte recovery. See the [wire interface reference](reference/wire.md#interchangeable-packet-interfaces).
 
 Legacy and HT20 usage and measured coverage are documented in
-[radio.md](radio.md). VHT, HE, and EHT are outside this Wi-Fi 4 implementation.
+[radio.md](radio.md). The separate [VHT20 extension](reference/radio-vht20.md)
+adds single-stream Wi-Fi 5. HE and EHT remain outside these codecs.
 
 The full receive matrix below is implemented and independently tested with
 synthetic waveforms. Current shared-interface live evidence is narrower: all

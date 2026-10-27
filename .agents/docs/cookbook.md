@@ -2358,9 +2358,11 @@ cargo run -p crafter --features radio --example radio_receive -- --replay sample
 ```
 
 For the implemented modern subset, use `WifiDecoder` through that same packet
-source, or the example's leading `--modern` flag. It adds mixed-format HT20
-one-stream MCS0–7, BCC/LDPC, both guard intervals and A-MPDU extraction. This is
-not full HT/VHT/HE/EHT coverage. `max_frame_bytes` limits each MPDU and the
+source, or the example's leading `--modern` flag. It includes the HT20
+subset documented in [radio.md](../../docs/radio.md) and single-user VHT20
+MCS0–8 with one spatial/space-time stream, BCC/LDPC, both guard intervals and
+A-MPDU extraction. Wider channels, multiple data streams and HE/EHT DATA
+remain outside this codec. `max_frame_bytes` limits each MPDU and the
 output budget must hold all returned MPDUs plus two child slots. Repeated
 identical MPDUs have distinct `PhyDiagnostic::Ampdu` delimiter offsets while
 sharing their containing PPDU's sample interval. Keep both when matching.
@@ -2370,11 +2372,12 @@ cargo run -p crafter --features radio --example radio_receive -- --modern --repl
 cargo run -p crafter --features radio --example radio_receive -- --modern --replay-artifact saved-iq.iq
 ```
 
-The artifact reports typed `ht` and `ampdu` fields and records decoder `wifi`.
+The artifact reports typed `ht`, `vht` and `ampdu` fields and records decoder `wifi`.
 Default replay preserves the recorded decoder; explicit `--modern` selects it
 for older IQ too without relaxing recorded allocation bounds. Modern decoding
-is currently serial-only. Use the HT-aware `radio_compare` path, which requires
-known MCS/GI/bandwidth, preserves unknown coding and configuration fields,
+also supports the parallel and windowed decoder variants. Use the HT/VHT-aware
+`radio_compare` path, which requires
+known MCS/GI/bandwidth, preserves unknown configuration fields,
 and matches aggregate occurrences one-to-one. Unknown reference configurations
 remain qualification gaps, not an implicit assertion that the mode is supported; see
 [the modern development contract](../../docs/modern-wifi-iq.md).
