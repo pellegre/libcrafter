@@ -47,6 +47,11 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace
 
+      - name: Run offline radio tests
+        env:
+          CARGO_BUILD_JOBS: 2
+        run: cargo test --release -p crafter --features radio --all-targets
+
       - name: Run pcap roundtrip tests
         run: |
           cargo test -p crafter pcap_read

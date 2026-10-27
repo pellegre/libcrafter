@@ -262,3 +262,20 @@ Hardware qualification is a separate bounded process: it must transmit the
 production waveform through the HackRF, capture it through the monitor-mode
 dongle, compare exact MAC bytes and PHY metadata, and retain its untracked run
 evidence as described in `docs/radio.md`.
+
+## VHT20 independent IQ corpus
+
+The synthetic receive corpus contains 108 BCC waveforms, 73 LDPC waveforms,
+and 54 additional BCC aggregate waveforms. It covers MCS0–8, both guard
+intervals, carrier offset and multipath, single MPDUs, duplicate occurrences,
+large MPDUs, delimiter recovery and damaged LDPC codewords. Eleven negative
+waveforms exercise unsupported signaling, header integrity, SERVICE and FCS.
+
+`vht20-index.tsv` records expected FCS-bearing MPDUs, coding, MCS, guard length in
+samples, SHA-256 and the original exclusive DATA sample end. All waveforms
+start their preamble at sample 37. `vht20-invalid-index.tsv` identifies rejection controls.
+`vht20-ldpc-rate-index.tsv` independently specifies codeword geometry from initial symbol
+counts, MCS and symbol grouping; the one-stream receiver uses group 1.
+
+The forward construction follows IEEE 802.11-2020 clauses 9.7, 10.12.6–8 and
+21, including Table 21-29. These are offline correctness fixtures.

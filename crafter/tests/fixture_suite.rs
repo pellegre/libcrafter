@@ -8618,6 +8618,9 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ht-ampdu-index.tsv"
                 | "ht-ldpc-index.tsv"
                 | "ht-ldpc-invalid-index.tsv"
+                | "vht20-index.tsv"
+                | "vht20-invalid-index.tsv"
+                | "vht20-ldpc-rate-index.tsv"
                 | "ldpc-codewords.json"
                 | "ldpc-codewords.tsv"
                 | "ldpc-rate-index.tsv"
@@ -8727,6 +8730,12 @@ fn assert_fixture_filename_convention(relative: &Path) {
                     include_str!("fixtures/iq/ht-ldpc-invalid-index.tsv")
                         .lines()
                         .skip(1)
+                )
+                .chain(include_str!("fixtures/iq/vht20-index.tsv").lines().skip(1))
+                .chain(
+                    include_str!("fixtures/iq/vht20-invalid-index.tsv")
+                        .lines()
+                        .skip(1),
                 )
                 .chain(
                     include_str!("fixtures/iq/ht-mixed-index.tsv")

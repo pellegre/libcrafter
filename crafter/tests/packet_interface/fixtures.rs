@@ -119,14 +119,14 @@ fn independent_legacy_and_ht_vectors_cross_packet_wire() {
 #[test]
 fn independent_vht_aggregates_cross_packet_wire() {
     for name in ["vht-ampdu-8-gi400-duplicate", "vht-ldpc-0-gi800-duplicate"] {
-        let row = include_str!("../fixtures/iq/vht20/index.tsv")
+        let row = include_str!("../fixtures/iq/vht20-index.tsv")
             .lines()
             .find(|r| r.split('\t').next() == Some(name))
             .unwrap();
         let columns: Vec<_> = row.split('\t').collect();
         let expected: Vec<_> = columns[4].split(',').map(decode_hex).collect();
         let records = receive(iq_backend(
-            fs::read(fixtures().join(format!("iq/vht20/{name}.cs8"))).unwrap(),
+            fs::read(fixtures().join(format!("iq/{name}.cs8"))).unwrap(),
         ));
         assert_eq!(records.len(), expected.len());
         for (record, bytes) in records.iter().zip(&expected) {
