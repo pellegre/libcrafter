@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf, time::Duration};
 
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq/vht20")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq")
 }
 fn unhex(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -52,7 +52,7 @@ fn feed(bytes: &[u8], size: usize, bounds: RxConfig) -> RadioResult<DecodeOutput
 
 #[test]
 fn independent_streaming_waveforms() {
-    let index = fs::read_to_string(root().join("index.tsv")).unwrap();
+    let index = fs::read_to_string(root().join("vht20-index.tsv")).unwrap();
     let mut coverage = std::collections::BTreeSet::new();
     for line in index.lines().skip(1) {
         let c: Vec<_> = line.split('\t').collect();
@@ -98,7 +98,7 @@ fn independent_streaming_waveforms() {
 
 #[test]
 fn independent_invalid_waveforms_and_truncation() {
-    let index = fs::read_to_string(root().join("invalid.tsv")).unwrap();
+    let index = fs::read_to_string(root().join("vht20-invalid-index.tsv")).unwrap();
     for line in index.lines().skip(1) {
         let c: Vec<_> = line.split('\t').collect();
         let bytes = fs::read(root().join(format!("{}.cs8", c[0]))).unwrap();
@@ -128,7 +128,7 @@ fn independent_invalid_waveforms_and_truncation() {
 
 #[test]
 fn independent_ldpc_symbol_geometry() {
-    let index = fs::read_to_string(root().join("ldpc-rate.tsv")).unwrap();
+    let index = fs::read_to_string(root().join("vht20-ldpc-rate-index.tsv")).unwrap();
     let mut cases = 0;
     for line in index.lines().skip(1) {
         let c: Vec<usize> = line.split('\t').map(|v| v.parse().unwrap()).collect();
@@ -158,7 +158,7 @@ fn independent_ldpc_symbol_geometry() {
 
 #[test]
 fn packet_transmissions_recover_complete_mpdus() {
-    let index = fs::read_to_string(root().join("index.tsv")).unwrap();
+    let index = fs::read_to_string(root().join("vht20-index.tsv")).unwrap();
     let row: Vec<_> = index.lines().nth(1).unwrap().split('\t').collect();
     let mpdu = unhex(row[4]);
     let mac = &mpdu[..mpdu.len() - 4];
