@@ -13,5 +13,7 @@ pub use tx::{
     HtCoding, HtFormat, HtGuardInterval, HtMcs, HtSignalBits, HtTransmission, HtTxConfig,
 };
 
+pub(in crate::radio) use signal::crc;
+
 pub(super) use signal::{decode_iq, decode_iq_at};
 pub(super) use training::{train_single_stream, train_stbc_second};
